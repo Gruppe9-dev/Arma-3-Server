@@ -1,20 +1,11 @@
 // =============================================================================
-// initServer.sqf – Headless Client AI Transfer
-// Place this file in your mission folder and call it from description.ext:
-//
-//   class Header {
-//       onLoadMission = "Gruppe 9";
-//   };
-//   // At the bottom of description.ext:
-//   // (nothing needed – initServer.sqf is auto-executed by Arma on the server)
-//
-// OR call it manually from your existing initServer.sqf:
-//   execVM "initServer.sqf";
+// initServer.sqf – Headless Client AI Transfer with Load Balancing
+// Drop into your mission folder. Arma 3 executes this automatically on server.
 //
 // Requirements:
-//   - server.cfg must have: headlessClients[] = {"127.0.0.1"};
-//                           localClient[]      = {"127.0.0.1"};
-//   - Headless Clients must be started BEFORE or shortly after the mission loads.
+//   - CBA_A3 loaded
+//   - server.cfg: headlessClients[] = {"127.0.0.1"};
+//                 localClient[]     = {"127.0.0.1"};
 // =============================================================================
 
 if (!isServer) exitWith {};
@@ -22,91 +13,123 @@ if (!isServer) exitWith {};
 // ---------------------------------------------------------------------------
 // Configuration
 // ---------------------------------------------------------------------------
-private _hcTransferDelay    = 15;   // seconds to wait after mission start before first transfer
-                                     // (gives HCs time to connect and initialize)
-private _rebalanceInterval  = 60;   // seconds between periodic rebalance checks
-                                     // (picks up AI groups spawned mid-mission)
-private _debug              = false; // set true to see transfer messages in server log
+private _hcWaitTimeout     = 60;  // max seconds to wait for HCs before giving up
+private _rebalanceInterval = 60;  // seconds between periodic rebalances
+private _debug             = true;
 
 // ---------------------------------------------------------------------------
-// Helper: log to server log (only when _debug = true)
+// Helper: get connected HCs via the dedicated SQF variable
+// Falls back to allPlayers filter if headlessClients is empty
 // ---------------------------------------------------------------------------
-private _fnc_log = {
-    params ["_msg"];
-    if (_debug) then {
-        diag_log format ["[HC-Transfer] %1", _msg];
+private _fnc_getHCs = {
+    private _hcs = headlessClients;
+    // fallback: allPlayers that are not real players and not the server
+    if (_hcs isEqualTo []) then {
+        _hcs = allPlayers select { !isPlayer _x && !(isNull _x) };
     };
+    _hcs select { !isNull _x }
 };
 
 // ---------------------------------------------------------------------------
-// Helper: return list of connected Headless Clients (sorted by current load)
+// Helper: find the HC with the fewest assigned groups (load balancing)
 // ---------------------------------------------------------------------------
-private _fnc_getHCList = {
-    headlessClients select { !isNull _x && { alive _x } }
+private _fnc_leastLoadedHC = {
+    params ["_hcs"];
+    private _loads = _hcs apply { [owner _x, {groupOwner _x == owner _this} count allGroups] };
+    (_loads select { _x select 1 == ((_loads apply { _x select 1 }) select [0, count _loads] call BIS_fnc_arraySortBy) select 0 }) select 0 select 0
 };
 
 // ---------------------------------------------------------------------------
-// Helper: transfer all non-player AI groups to HCs in round-robin
+// Helper: transfer all AI groups – each group goes to the least loaded HC
 // ---------------------------------------------------------------------------
-private _fnc_transferAI = {
-    private _hcs = [] call _fnc_getHCList;
+private _fnc_transfer = {
+    private _hcs = [] call _fnc_getHCs;
 
     if (_hcs isEqualTo []) exitWith {
-        ["No Headless Clients connected – skipping transfer."] call _fnc_log;
+        if (_debug) then { diag_log "[HC-Transfer] No HCs found – skipping." };
     };
 
-    private _hcCount    = count _hcs;
-    private _idx        = 0;
     private _transferred = 0;
-    private _skipped    = 0;
+    private _hcOwners    = _hcs apply { owner _x };
 
     {
         private _grp = _x;
-
-        // Skip player groups, empty groups, and groups already on an HC
-        if (isPlayer (leader _grp)) exitWith { _skipped = _skipped + 1; };
+        if (isPlayer (leader _grp)) exitWith {};
         if ((count units _grp) == 0) exitWith {};
+        if (groupOwner _grp in _hcOwners) exitWith {};  // already on an HC
 
-        private _currentOwner = groupOwner _grp;
-        private _targetHC     = _hcs select (_idx mod _hcCount);
-        private _targetOwner  = owner _targetHC;
+        // Pick HC with fewest groups
+        private _best      = _hcOwners select 0;
+        private _bestCount = {groupOwner _x == _best} count allGroups;
 
-        if (_currentOwner != _targetOwner) then {
-            _grp setGroupOwner _targetOwner;
-            _transferred = _transferred + 1;
-            [format ["Transferred %1 (leader: %2) -> HC owner %3",
-                _grp, leader _grp, _targetOwner]] call _fnc_log;
+        {
+            private _cnt = {groupOwner _x == _x} count allGroups;
+            if (_cnt < _bestCount) then { _best = _x; _bestCount = _cnt; };
+        } forEach _hcOwners;
+
+        _grp setGroupOwner _best;
+        _transferred = _transferred + 1;
+
+        if (_debug) then {
+            diag_log format ["[HC-Transfer] %1 -> HC owner %2 (groups on that HC now: %3)",
+                _grp, _best, _bestCount + 1];
         };
-
-        _idx = _idx + 1;
 
     } forEach allGroups;
 
-    [format ["Transfer complete. Moved: %1  Skipped (player): %2  HCs: %3",
-        _transferred, _skipped, _hcCount]] call _fnc_log;
+    if (_debug) then {
+        private _dist = _hcOwners apply { format ["HC%1: %2 groups", _x, {groupOwner _x == _x} count allGroups] };
+        diag_log format ["[HC-Transfer] Done. Moved: %1 | Distribution: %2", _transferred, _dist];
+    };
 };
 
 // ---------------------------------------------------------------------------
-// Initial transfer – wait for HCs to connect first
+// Wait until at least one HC connects, then do initial transfer + setup rebalance
 // ---------------------------------------------------------------------------
+if (_debug) then {
+    diag_log "[HC-Transfer] Script loaded. Waiting for Headless Clients...";
+};
+
 [
+    // Condition: at least 1 HC present
+    { (count ([] call (_thisArgs select 0))) > 0 },
+
+    // On success: transfer and start periodic rebalance
     {
-        params ["_fnc_transferAI", "_fnc_log", "_rebalanceInterval"];
+        params ["_fnc_getHCs", "_fnc_transfer", "_rebalanceInterval", "_debug"];
+        private _hcCount = count ([] call _fnc_getHCs);
+        if (_debug) then {
+            diag_log format ["[HC-Transfer] %1 HC(s) connected. Running initial transfer.", _hcCount];
+        };
+        [] call _fnc_transfer;
 
-        ["Initial HC transfer starting..."] call _fnc_log;
-        [] call _fnc_transferAI;
-
-        // Periodic rebalance – catches groups spawned mid-mission
-        [{
-            params ["_fnc_transferAI", "_fnc_log"];
-            ["Periodic rebalance..."] call _fnc_log;
-            [] call _fnc_transferAI;
-        }, [_fnc_transferAI, _fnc_log], _rebalanceInterval, _rebalanceInterval] call CBA_fnc_addPerFrameHandler;
-
+        [
+            { [] call (_thisArgs select 0); },
+            [_fnc_transfer],
+            _rebalanceInterval,
+            _rebalanceInterval
+        ] call CBA_fnc_addPerFrameHandler;
     },
-    [_fnc_transferAI, _fnc_log, _rebalanceInterval],
-    _hcTransferDelay
-] call CBA_fnc_waitAndExecute;
 
-["HC Transfer script loaded. First transfer in %1s, rebalance every %2s.",
-    _hcTransferDelay, _rebalanceInterval] call _fnc_log;
+    [_fnc_getHCs, _fnc_transfer, _rebalanceInterval, _debug],
+
+    // Timeout
+    _hcWaitTimeout,
+
+    // On timeout: still set up rebalance so late-connecting HCs get groups
+    {
+        params ["_fnc_getHCs", "_fnc_transfer", "_rebalanceInterval", "_debug"];
+        if (_debug) then {
+            diag_log "[HC-Transfer] Timeout waiting for HCs. Rebalance loop still active.";
+        };
+        [
+            { [] call (_thisArgs select 0); },
+            [_fnc_transfer],
+            _rebalanceInterval,
+            _rebalanceInterval
+        ] call CBA_fnc_addPerFrameHandler;
+    },
+
+    [_fnc_getHCs, _fnc_transfer, _rebalanceInterval, _debug]
+
+] call CBA_fnc_waitUntilAndExecute;

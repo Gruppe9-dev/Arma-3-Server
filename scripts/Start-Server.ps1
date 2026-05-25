@@ -70,14 +70,14 @@ Write-Log "Binary     : $binary" "Info"
 # Build mod strings
 # ---------------------------------------------------------------------------
 $modString = ""
-if ($Prof.PSObject.Properties.Name -contains "Mods" -and $Prof.Mods.Count -gt 0) {
-    $modString = Build-ModString -Mods $Prof.Mods -ServerInstallPath $Config.ServerInstallPath
+if ($Prof.PSObject.Properties.Name -contains "Mods" -and @($Prof.Mods).Count -gt 0) {
+    $modString = Build-ModString -Mods @($Prof.Mods) -ServerInstallPath $Config.ServerInstallPath
     Write-Log "Mods       : $modString" "Info"
 }
 
 $serverModString = ""
-if ($Prof.PSObject.Properties.Name -contains "ServerMods" -and $Prof.ServerMods.Count -gt 0) {
-    $serverModString = Build-ModString -Mods $Prof.ServerMods `
+if ($Prof.PSObject.Properties.Name -contains "ServerMods" -and @($Prof.ServerMods).Count -gt 0) {
+    $serverModString = Build-ModString -Mods @($Prof.ServerMods) `
                                        -ServerInstallPath $Config.ServerInstallPath
     Write-Log "ServerMods : $serverModString" "Info"
 }

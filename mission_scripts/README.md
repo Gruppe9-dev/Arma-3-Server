@@ -27,15 +27,27 @@ Rebalances periodically to catch groups spawned mid-mission.
 
 ### How to verify it's working
 
-In the Zeus / admin debug console:
+**Step 1 – Check if HCs are connected** (SERVER EXEC):
+```sqf
+// headlessClients is the reliable SQF variable for HCs
+(format ["headlessClients: %1 | count: %2", headlessClients, count headlessClients]) remoteExec ["hint"];
+```
+If this returns `0`, the HCs aren't connecting. Check `server.cfg` and that `Start-Server.ps1` started the HC processes.
+
+**Step 2 – Check group ownership** (after mission start + 15s):
 ```sqf
 {
     private _owner = groupOwner _x;
-    systemChat format ["%1 -> owner %2", _x, _owner];
+    systemChat format ["%1 -> owner %2 (player: %3)", _x, _owner, isPlayer leader _x];
 } forEach allGroups;
 ```
-- `owner 0` = Server (not transferred yet / player group)
+- `owner 0` = Server (AI not transferred yet, or player group)
 - `owner 2+` = Headless Client ✓
+
+**Step 3 – Check server RPT log** for `[HC-Transfer]` lines:
+```
+profiles\main\server_console_<PID>.log
+```
 
 ### Requirements
 
