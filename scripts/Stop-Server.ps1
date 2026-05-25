@@ -101,14 +101,14 @@ function Stop-ByPidFile {
     }
 
     $stopped = 0
-    foreach ($pid in $pids) {
-        $proc = Get-Process -Id $pid -ErrorAction SilentlyContinue
+    foreach ($procId in $pids) {
+        $proc = Get-Process -Id $procId -ErrorAction SilentlyContinue
         if ($proc) {
-            Write-Log "  Stopping $Label PID $pid [$($proc.ProcessName)]..." "Info"
+            Write-Log "  Stopping $Label PID $procId [$($proc.ProcessName)]..." "Info"
             $proc | Stop-Process -Force
             $stopped++
         } else {
-            Write-Log "  $Label PID $pid is no longer running." "Info"
+            Write-Log "  $Label PID $procId is no longer running." "Info"
         }
     }
 
