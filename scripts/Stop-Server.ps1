@@ -46,8 +46,8 @@ $ScriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 # ---------------------------------------------------------------------------
 if ($Force) {
     Write-Log "=== Force Stop: all arma3server* processes ===" "Header"
-    $procs = Get-ServerProcesses
-    if (-not $procs) {
+    $procs = @(Get-ServerProcesses)
+    if ($procs.Count -eq 0) {
         Write-Log "No running arma3server processes found." "Info"
         exit 0
     }
@@ -132,8 +132,8 @@ if (-not $HCOnly) {
     if (-not $found) {
         # Fallback: try to identify by checking all arma3server processes
         Write-Log "Falling back to process name search..." "Info"
-        $procs = Get-ServerProcesses | Where-Object { $_.ProcessName -notlike "*client*" }
-        if ($procs) {
+        $procs = @(Get-ServerProcesses | Where-Object { $_.ProcessName -notlike "*client*" })
+        if ($procs.Count -gt 0) {
             Write-Log "Found $($procs.Count) arma3server process(es). Stopping..." "Warning"
             $procs | Stop-Process -Force
             Write-Log "Stopped." "Success"
