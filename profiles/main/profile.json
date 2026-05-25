@@ -18,7 +18,7 @@
   "Mods": [
     "@CBA_A3",
     "@ace",
-    "@task_force_radio"
+    "@task_force_radio_beta"
   ],
 
   "ServerMods": [],
@@ -37,9 +37,9 @@
       "_name": "ACE3"
     },
     {
-      "Id": "620019431",
-      "FolderName": "@task_force_radio",
-      "_name": "Task Force Arrowhead Radio (BETA!!!)"
+      "Id": "894678801",
+      "FolderName": "@task_force_radio_beta",
+      "_name": "Task Force Arrowhead Radio BETA"
     }
   ]
 }
