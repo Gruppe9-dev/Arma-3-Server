@@ -7,6 +7,10 @@ profiles/**/*.pids
 profiles/**/*.log
 profiles/**/BattlEye/
 profiles/**/Users/
+profiles/**/AnimDataCache/
+profiles/**/DataCache/
+profiles/**/arma3server*.txt
+profiles/**/arma3server*_x64_*/
 
 # SteamCMD (lives outside the repo, but guard against accidental add)
 steamcmd/
