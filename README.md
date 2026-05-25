@@ -17,7 +17,7 @@ A PowerShell-based server management framework for Arma 3 on Windows Server 2022
 
 - Windows Server 2022 (or Windows 10/11)
 - PowerShell 5.1+ (pre-installed on Windows Server 2022)
-- A Steam account that **owns Arma 3** (required for Workshop downloads)
+- A Steam ccount athat **owns Arma 3** (required for Workshop downloads)
 - Firewall: UDP ports **2302–2306** open inbound (adjust per profile port)
 
 ---

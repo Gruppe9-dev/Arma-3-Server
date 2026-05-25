@@ -152,7 +152,8 @@ function Get-FrameworkConfig {
     # --- Validate required keys ---
     $required = @("ServerInstallPath", "SteamCMDPath", "WorkshopStagingPath", "SteamUsername")
     foreach ($key in $required) {
-        $val = $config.PSObject.Properties[$key]?.Value
+        $prop = $config.PSObject.Properties[$key]
+        $val  = if ($prop) { $prop.Value } else { $null }
         if ([string]::IsNullOrWhiteSpace($val)) {
             Write-Log "Required value '$key' is missing or empty in .env." "Error"
             Write-Log "Set $(($script:EnvKeyMap.GetEnumerator() | Where-Object Value -eq $key).Key) in your .env file." "Error"
