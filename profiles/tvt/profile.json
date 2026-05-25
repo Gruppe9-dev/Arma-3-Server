@@ -1,0 +1,47 @@
+{
+  "_comment": "TvT / PvP server - separate port, no Headless Clients (AI-free), public branch.",
+
+  "ProfileName": "tvt",
+
+  "Port": 2402,
+  "_portNote": "Port offset +100 from main. Requires UDP 2402-2406 open in firewall.",
+
+  "Branch": "public",
+
+  "MaxPlayers": 40,
+
+  "FPSLimit": 50,
+
+  "EnableAutoInit": false,
+
+  "HeadlessClientCount": 0,
+  "_hcNote": "No HCs for TvT - AI is minimal or absent in PvP missions.",
+
+  "Mods": [
+    "@CBA_A3",
+    "@ace",
+    "@ACRE2"
+  ],
+
+  "ServerMods": [],
+
+  "ExtraArgs": [],
+
+  "WorkshopIds": [
+    {
+      "Id": "450814997",
+      "FolderName": "@CBA_A3",
+      "_name": "CBA: Community Base Addons A3"
+    },
+    {
+      "Id": "463939057",
+      "FolderName": "@ace",
+      "_name": "ACE3"
+    },
+    {
+      "Id": "751965892",
+      "FolderName": "@ACRE2",
+      "_name": "ACRE2"
+    }
+  ]
+}

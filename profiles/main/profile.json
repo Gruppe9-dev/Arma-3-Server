@@ -1,0 +1,51 @@
+{
+  "_comment": "Main cooperative server - Profiling Branch, 2 Headless Clients, standard coop mod set.",
+
+  "ProfileName": "main",
+
+  "Port": 2302,
+
+  "Branch": "profiling",
+
+  "MaxPlayers": 40,
+
+  "FPSLimit": 50,
+
+  "EnableAutoInit": false,
+
+  "HeadlessClientCount": 2,
+
+  "Mods": [
+    "@CBA_A3",
+    "@ace",
+    "@ACRE2",
+    "@task_force_radio"
+  ],
+
+  "ServerMods": [],
+
+  "ExtraArgs": [],
+
+  "WorkshopIds": [
+    {
+      "Id": "450814997",
+      "FolderName": "@CBA_A3",
+      "_name": "CBA: Community Base Addons A3"
+    },
+    {
+      "Id": "463939057",
+      "FolderName": "@ace",
+      "_name": "ACE3"
+    },
+    {
+      "Id": "751965892",
+      "FolderName": "@ACRE2",
+      "_name": "ACRE2"
+    },
+    {
+      "Id": "620019431",
+      "FolderName": "@task_force_radio",
+      "_name": "Task Force Arrowhead Radio (BETA!!!)"
+    }
+  ]
+}

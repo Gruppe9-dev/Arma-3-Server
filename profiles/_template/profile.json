@@ -1,0 +1,41 @@
+{
+  "_comment": "Copy this folder and rename it. Edit all values below.",
+
+  "ProfileName": "template",
+
+  "Port": 2302,
+
+  "Branch": "public",
+  "_branchOptions": "public | profiling",
+
+  "MaxPlayers": 40,
+
+  "FPSLimit": 50,
+  "_fpsLimitNote": "Recommended: 50 for normal play, 0 to disable the cap.",
+
+  "EnableAutoInit": false,
+  "_autoInitNote": "Automatically start the first mission. Requires persistent=1 in server.cfg. Disables mission voting.",
+
+  "HeadlessClientCount": 0,
+  "_hcNote": "Number of Headless Client processes to start automatically. 0 = disabled.",
+
+  "Mods": [
+    "@CBA_A3"
+  ],
+  "_modsNote": "Folder names of mods inside ServerInstallPath. These are passed as -mod= and must be present on all clients.",
+
+  "ServerMods": [],
+  "_serverModsNote": "Server-only mods passed as -serverMod=. Clients do not need these. Cannot be used with Headless Clients.",
+
+  "ExtraArgs": [],
+  "_extraArgsNote": "Additional raw command-line arguments passed to arma3server (e.g. ['-netlog', '-filePatching']).",
+
+  "WorkshopIds": [
+    {
+      "Id": "450814997",
+      "FolderName": "@CBA_A3",
+      "_name": "CBA: Community Base Addons A3"
+    }
+  ],
+  "_workshopNote": "Used by Sync-Mods.ps1 to download mods from Steam Workshop. Id = Workshop URL ?id= value."
+}

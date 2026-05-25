@@ -1,0 +1,17 @@
+# Environment / secrets - never commit
+.env
+
+# Arma 3 generated files in profile directories
+profiles/**/*.pid
+profiles/**/*.pids
+profiles/**/*.log
+profiles/**/BattlEye/
+profiles/**/Users/
+
+# SteamCMD (lives outside the repo, but guard against accidental add)
+steamcmd/
+SteamCMD/
+
+# Windows
+Thumbs.db
+Desktop.ini
