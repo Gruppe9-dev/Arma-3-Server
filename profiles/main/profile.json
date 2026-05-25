@@ -18,7 +18,6 @@
   "Mods": [
     "@CBA_A3",
     "@ace",
-    "@ACRE2",
     "@task_force_radio"
   ],
 
@@ -36,11 +35,6 @@
       "Id": "463939057",
       "FolderName": "@ace",
       "_name": "ACE3"
-    },
-    {
-      "Id": "751965892",
-      "FolderName": "@ACRE2",
-      "_name": "ACRE2"
     },
     {
       "Id": "620019431",
