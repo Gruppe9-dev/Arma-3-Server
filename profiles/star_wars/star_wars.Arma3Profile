@@ -1,0 +1,40 @@
+// Arma 3 Server Difficulty Profile – star_wars
+// Loaded via: -profiles="...\profiles\star_wars" -name=star_wars
+
+class DifficultyPresets
+{
+    class CustomDifficulty
+    {
+        class Options
+        {
+            reducedDamage       = 0;
+            groupIndicators     = 0;
+            friendlyTags        = 0;
+            enemyTags           = 0;
+            detectedMines       = 0;
+            commands            = 0;
+            waypoints           = 0;
+            weaponInfo          = 1;
+            stanceIndicator     = 1;
+            staminaBar          = 1;
+            weaponCrosshair     = 0;
+            visionAid           = 0;
+            thirdPersonView     = 0;
+            cameraShake         = 1;
+            scoreTable          = 1;
+            deathMessages       = 1;
+            vonID               = 1;
+            mapContent          = 0;
+            autoReport          = 0;
+            multipleSaves       = 0;
+        };
+
+        aiLevelPreset = 3;
+
+        class AILevel
+        {
+            skillAI     = 0.70;
+            precisionAI = 0.50;
+        };
+    };
+};
