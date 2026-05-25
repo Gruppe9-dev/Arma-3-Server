@@ -39,7 +39,7 @@ param(
 
     [switch]$NoWait,
 
-    [int]$HCDelay = 30
+    [int]$HCDelay = 10
 )
 
 Set-StrictMode -Version Latest
@@ -174,9 +174,11 @@ if ($hcCount -gt 0 -and -not $NoHC) {
         Write-Log "Waiting $HCDelay seconds before starting HCs (-NoWait mode)..." "Info"
         Start-Sleep -Seconds $HCDelay
     } else {
-        $ready = Wait-ServerReady -Port $Prof.Port -TimeoutSeconds 120
+        # Arma 3 only responds to UDP queries once a mission is loaded.
+        # A short timeout is fine – if the server is up, HCs can connect immediately.
+        $ready = Wait-ServerReady -Port $Prof.Port -TimeoutSeconds 20
         if (-not $ready) {
-            Write-Log "Server did not respond in time. Waiting additional ${HCDelay}s before HC start..." "Warning"
+            Write-Log "Server did not respond to UDP query (normal without active mission). Starting HCs in ${HCDelay}s..." "Info"
             Start-Sleep -Seconds $HCDelay
         }
     }
