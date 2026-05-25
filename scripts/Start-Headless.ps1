@@ -51,8 +51,8 @@ $Prof   = Get-Profile -ProfileName $Profile
 
 $hcName = "HC$HCIndex"
 
-Write-Log "=== Headless Client $HCIndex: $Profile ===" "Header"
-Write-Log "Server    : ${ServerHost}:$($Prof.Port)" "Info"
+Write-Log "=== Headless Client ${HCIndex}: $Profile ===" "Header"
+Write-Log "Server    : $ServerHost`:$($Prof.Port)" "Info"
 Write-Log "HC Name   : $hcName" "Info"
 
 # ---------------------------------------------------------------------------
@@ -69,7 +69,7 @@ if (-not (Test-Path $binary)) {
 # Build mod string (HC must load the same mods as the server)
 # ---------------------------------------------------------------------------
 $modString = ""
-if ($Prof.PSObject.Properties.Name -contains "Mods" -and $Prof.Mods.Count -gt 0) {
+if ($Prof.PSObject.Properties.Name -contains "Mods" -and @($Prof.Mods).Count -gt 0) {
     $modString = Build-ModString -Mods $Prof.Mods -ServerInstallPath $Config.ServerInstallPath
 }
 
