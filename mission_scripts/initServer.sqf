@@ -58,13 +58,16 @@ private _fnc_transfer = {
         if ((count units _grp) == 0) exitWith {};
         if (groupOwner _grp in _hcOwners) exitWith {};  // already on an HC
 
-        // Pick HC with fewest groups
+        // Pick HC with fewest groups – capture owner ID in _hcId so the
+        // inner count-condition _x (= a group) does not shadow the outer _x.
         private _best      = _hcOwners select 0;
-        private _bestCount = {groupOwner _x == _best} count allGroups;
+        private _hcId      = _best;
+        private _bestCount = { groupOwner _x == _hcId } count allGroups;
 
         {
-            private _cnt = {groupOwner _x == _x} count allGroups;
-            if (_cnt < _bestCount) then { _best = _x; _bestCount = _cnt; };
+            _hcId            = _x;
+            private _cnt     = { groupOwner _x == _hcId } count allGroups;
+            if (_cnt < _bestCount) then { _best = _hcId; _bestCount = _cnt; };
         } forEach _hcOwners;
 
         _grp setGroupOwner _best;

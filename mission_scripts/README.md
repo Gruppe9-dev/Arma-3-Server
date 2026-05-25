@@ -27,27 +27,40 @@ Rebalances periodically to catch groups spawned mid-mission.
 
 ### How to verify it's working
 
-**Step 1 – Check if HCs are connected** (SERVER EXEC):
+**Step 1 – Check if HCs are connected**
+
+Admin panel → **Server Exec**:
 ```sqf
-// headlessClients is the reliable SQF variable for HCs
 (format ["headlessClients: %1 | count: %2", headlessClients, count headlessClients]) remoteExec ["hint"];
 ```
-If this returns `0`, the HCs aren't connecting. Check `server.cfg` and that `Start-Server.ps1` started the HC processes.
+> `headlessClients` is only populated on the server, so *Server Exec* is required.
+> `remoteExec ["hint"]` sends the result as a popup to all clients (including you).
+> If count is `0` the HCs aren't connecting – check `server.cfg` and that `Start-Server.ps1` started the HC processes.
 
-**Step 2 – Check group ownership** (after mission start + 15s):
+**Step 2 – Check group ownership** (run after mission start + 15 s)
+
+Admin panel → **Global Exec**:
 ```sqf
-{
-    private _owner = groupOwner _x;
-    systemChat format ["%1 -> owner %2 (player: %3)", _x, _owner, isPlayer leader _x];
-} forEach allGroups;
+private _result = "";
+{ _result = _result + format ["%1 -> owner %2\n", _x, groupOwner _x]; } forEach allGroups;
+_result remoteExec ["hint"];
 ```
-- `owner 0` = Server (AI not transferred yet, or player group)
-- `owner 2+` = Headless Client ✓
+> `remoteExec ["hint"]` is required – plain `hint` only shows on the machine that ran the code.
+> When executed globally it runs locally and shows the hint on your screen.
+> - `owner 0` = still on server (not transferred yet, or player group)
+> - `owner 2 / 3 / …` = on a Headless Client ✓
 
-**Step 3 – Check server RPT log** for `[HC-Transfer]` lines:
+**Step 3 – Check server RPT log** for `[HC-Transfer]` lines
+
+When `_debug = true` all transfer actions are written via `diag_log` to the server's RPT file:
 ```
-profiles\main\server_console_<PID>.log
+profiles\<ProfileName>\<ProfileName>_<Date>_<PID>.rpt
 ```
+Example:
+```
+profiles\main\main_2026-05-25_17-01-20.rpt
+```
+Search for `[HC-Transfer]` to see exactly which groups were moved and the load distribution.
 
 ### Requirements
 
