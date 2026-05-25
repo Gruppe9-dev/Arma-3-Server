@@ -7,9 +7,9 @@
 
   "Branch": "profiling",
 
-  "MaxPlayers": 40,
+  "MaxPlayers": 80,
 
-  "FPSLimit": 0,
+  "FPSLimit": 1000,
 
   "EnableAutoInit": false,
 

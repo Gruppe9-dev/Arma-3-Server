@@ -117,6 +117,17 @@ if ($Prof.PSObject.Properties.Name -contains "ExtraArgs" -and $Prof.ExtraArgs) {
 $serverArgs.Add("-enableHT")
 
 # ---------------------------------------------------------------------------
+# Deploy userconfig (ACE3 / CBA settings) from profile to server root
+# ---------------------------------------------------------------------------
+$profileUserconfig = Join-Path $Prof.ProfileDir "userconfig"
+if (Test-Path $profileUserconfig) {
+    $serverUserconfig = Join-Path $Config.ServerInstallPath "userconfig"
+    Write-Log "Deploying userconfig from profile '$Profile' to server root..." "Info"
+    Copy-Item -Path $profileUserconfig -Destination $Config.ServerInstallPath -Recurse -Force
+    Write-Log "userconfig deployed to: $serverUserconfig" "Success"
+}
+
+# ---------------------------------------------------------------------------
 # Check for port conflict
 # ---------------------------------------------------------------------------
 $existingProcs = Get-ServerProcesses
