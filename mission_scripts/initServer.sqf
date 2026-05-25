@@ -15,44 +15,45 @@ if (!isServer) exitWith {};
 // ---------------------------------------------------------------------------
 private _debug             = true;
 private _rebalanceInterval = 60;   // seconds between rebalances
-private _hcWaitTimeout     = 60;   // seconds to wait for first HC before giving up
 
-// Store everything in missionNamespace – private vars don't survive callbacks
 missionNamespace setVariable ["HC_debug",             _debug];
 missionNamespace setVariable ["HC_rebalanceInterval", _rebalanceInterval];
 missionNamespace setVariable ["HC_initialized",       false];
 missionNamespace setVariable ["HC_lastRebalance",     -9999];
-missionNamespace setVariable ["HC_startTime",         time];
-missionNamespace setVariable ["HC_hcWaitTimeout",     _hcWaitTimeout];
+missionNamespace setVariable ["HC_lastWaitLog",       -999];
+missionNamespace setVariable ["HC_ownerIds",          []];
 
 // ---------------------------------------------------------------------------
-// Helper: get connected HCs
+// HC_fnc_registerOwner – called (broadcast) by each HC via remoteExec.
+// Guard with isServer so only the server stores the ID.
 // ---------------------------------------------------------------------------
-missionNamespace setVariable ["HC_fnc_getHCs", {
-    private _hcs = headlessClients;
-    if (_hcs isEqualTo []) then {
-        _hcs = allPlayers select { !isPlayer _x && !(isNull _x) };
+HC_fnc_registerOwner = {
+    if (!isServer) exitWith {};
+    params [["_ownerId", 0]];
+    if (_ownerId == 0) exitWith {};
+    private _list = missionNamespace getVariable ["HC_ownerIds", []];
+    if (_ownerId in _list) exitWith {};
+    _list pushBack _ownerId;
+    missionNamespace setVariable ["HC_ownerIds", _list];
+    if (missionNamespace getVariable ["HC_debug", false]) then {
+        diag_log format ["[HC-Transfer] HC registered owner ID: %1  (total: %2)", _ownerId, count _list];
     };
-    _hcs select { !isNull _x }
-}];
+};
 
 // ---------------------------------------------------------------------------
-// Helper: transfer + rebalance all AI groups across HCs
+// Transfer function – uses the registered HC machine IDs
 // ---------------------------------------------------------------------------
 missionNamespace setVariable ["HC_fnc_transfer", {
-    private _debug    = missionNamespace getVariable ["HC_debug", false];
-    private _hcs      = [] call (missionNamespace getVariable "HC_fnc_getHCs");
+    private _debug    = missionNamespace getVariable ["HC_debug",    false];
+    private _hcOwners = missionNamespace getVariable ["HC_ownerIds", []];
 
-    // Always update the timestamp – even if we exit early – so the timer
-    // does not immediately fire again on the next frame.
     missionNamespace setVariable ["HC_lastRebalance", time];
 
-    if (_hcs isEqualTo []) exitWith {
-        if (_debug) then { diag_log "[HC-Transfer] No HCs found – skipping." };
+    if (_hcOwners isEqualTo []) exitWith {
+        if (_debug) then { diag_log "[HC-Transfer] No HC owner IDs registered – skipping." };
     };
 
     private _transferred = 0;
-    private _hcOwners    = _hcs apply { owner _x };
 
     {
         private _grp          = _x;
@@ -61,7 +62,7 @@ missionNamespace setVariable ["HC_fnc_transfer", {
         if (isPlayer (leader _grp)) exitWith {};
         if ((count units _grp) == 0) exitWith {};
 
-        // Find HC with fewest groups (load balancing)
+        // Find HC with fewest groups
         private _best      = _hcOwners select 0;
         private _hcId      = _best;
         private _bestCount = { groupOwner _x == _hcId } count allGroups;
@@ -72,11 +73,8 @@ missionNamespace setVariable ["HC_fnc_transfer", {
             if (_cnt < _bestCount) then { _best = _hcId; _bestCount = _cnt; };
         } forEach _hcOwners;
 
-        // Skip if already on the best HC
         if (_currentOwner == _best) exitWith {};
 
-        // Skip if already on an HC and the imbalance is less than 2 groups
-        // (avoids constant ping-ponging between equally loaded HCs)
         if (_currentOwner in _hcOwners) then {
             private _currentCount = { groupOwner _x == _currentOwner } count allGroups;
             if ((_currentCount - _bestCount) < 2) exitWith {};
@@ -103,39 +101,59 @@ missionNamespace setVariable ["HC_fnc_transfer", {
 }];
 
 if (_debug) then {
-    diag_log "[HC-Transfer] Script loaded. Waiting for Headless Clients...";
+    diag_log "[HC-Transfer] Script loaded. Waiting for HC self-registration...";
 };
 
 // ---------------------------------------------------------------------------
-// Single per-frame handler (runs every 1 s) – manages the full lifecycle.
-// Using one handler instead of CBA_fnc_waitUntilAndExecute avoids the issue
-// where the success-callback fires every frame while the condition is true.
+// Per-frame handler (every 1 s):
+//   1. Detect HC player objects by name
+//   2. Ask each HC to call back with its clientOwner ID (broadcast, guarded by isServer)
+//   3. Initial transfer once HCs have registered
+//   4. Periodic rebalance
 // ---------------------------------------------------------------------------
 [{
     private _debug             = missionNamespace getVariable ["HC_debug",             false];
     private _initialized       = missionNamespace getVariable ["HC_initialized",       false];
     private _lastRebalance     = missionNamespace getVariable ["HC_lastRebalance",     -9999];
-    private _startTime         = missionNamespace getVariable ["HC_startTime",         0];
     private _rebalanceInterval = missionNamespace getVariable ["HC_rebalanceInterval", 60];
-    private _hcWaitTimeout     = missionNamespace getVariable ["HC_hcWaitTimeout",     60];
-    private _hcs               = [] call (missionNamespace getVariable "HC_fnc_getHCs");
+    private _hcOwners          = missionNamespace getVariable ["HC_ownerIds",          []];
 
-    // --- Initial transfer: fire once when first HC connects ---
-    if (!_initialized && count _hcs > 0) then {
+    // Detect HC player objects by name (hc_1, hc_2, …)
+    private _hcPlayers = headlessClients;
+    if (!(_hcPlayers isEqualType []) || { _hcPlayers isEqualTo [] }) then {
+        _hcPlayers = allPlayers select { !isNull _x && (toLower (name _x) find "hc") == 0 };
+    };
+    _hcPlayers = _hcPlayers select { !isNull _x };
+
+    // Ask each detected HC to report its clientOwner back to the server.
+    // remoteExec with a player object runs on THAT player's machine.
+    // HC_fnc_registerOwner is broadcast and guarded with isServer.
+    {
+        private _hcPlayer = _x;
+        [{ [clientOwner] remoteExec ["HC_fnc_registerOwner"] }] remoteExec ["call", _hcPlayer];
+    } forEach _hcPlayers;
+
+    // Refresh owner list after potential new registrations this frame
+    _hcOwners = missionNamespace getVariable ["HC_ownerIds", []];
+
+    // --- Initial transfer ---
+    if (!_initialized && count _hcOwners > 0) then {
         if (_debug) then {
-            diag_log format ["[HC-Transfer] %1 HC(s) connected. Running initial transfer.", count _hcs];
+            diag_log format ["[HC-Transfer] %1 HC(s) registered. Initial transfer. IDs: %2",
+                count _hcOwners, _hcOwners];
         };
         [] call (missionNamespace getVariable "HC_fnc_transfer");
         missionNamespace setVariable ["HC_initialized", true];
     };
 
-    // --- Timeout: stop waiting even if no HC ever connected ---
-    if (!_initialized && (time - _startTime) > _hcWaitTimeout) then {
-        if (_debug) then {
-            diag_log "[HC-Transfer] Timeout – no HCs connected. Rebalance loop still active.";
+    // --- Still waiting: log every 30 s ---
+    if (!_initialized && _debug) then {
+        private _loggedAt = missionNamespace getVariable ["HC_lastWaitLog", -999];
+        if (time - _loggedAt >= 30) then {
+            diag_log format ["[HC-Transfer] Waiting... hcPlayers=%1 registeredOwners=%2",
+                count _hcPlayers, _hcOwners];
+            missionNamespace setVariable ["HC_lastWaitLog", time];
         };
-        missionNamespace setVariable ["HC_initialized",   true];
-        missionNamespace setVariable ["HC_lastRebalance", time];
     };
 
     // --- Periodic rebalance ---
@@ -144,4 +162,4 @@ if (_debug) then {
         [] call (missionNamespace getVariable "HC_fnc_transfer");
     };
 
-}, [], 1] call CBA_fnc_addPerFrameHandler;
+}, 1] call CBA_fnc_addPerFrameHandler;
