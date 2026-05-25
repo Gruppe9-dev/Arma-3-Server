@@ -9,7 +9,7 @@
 
   "MaxPlayers": 40,
 
-  "FPSLimit": 50,
+  "FPSLimit": 0,
 
   "EnableAutoInit": false,
 
