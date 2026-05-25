@@ -115,7 +115,7 @@ function Stop-ByPidFile {
     Remove-Item $PidFile -Force -ErrorAction SilentlyContinue
 
     if ($stopped -gt 0) {
-        Write-Log "$Label: stopped $stopped process(es)." "Success"
+        Write-Log "${Label}: stopped $stopped process(es)." "Success"
     }
     return $true
 }
