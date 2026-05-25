@@ -11,6 +11,8 @@ profiles/**/AnimDataCache/
 profiles/**/DataCache/
 profiles/**/arma3server*.txt
 profiles/**/arma3server*_x64_*/
+profiles/**/arma3serverprofiling*
+profiles/**/mpMessages*
 
 # SteamCMD (lives outside the repo, but guard against accidental add)
 steamcmd/
