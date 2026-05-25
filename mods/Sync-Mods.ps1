@@ -114,87 +114,91 @@ $steamUser = $Config.SteamUsername
 $steamPass = Read-SteamPassword -Username $steamUser -Config $Config
 
 # ---------------------------------------------------------------------------
-# Download each mod
+# Split modList into: needs download vs already deployed
 # ---------------------------------------------------------------------------
 $stagingRoot = Join-Path $Config.WorkshopStagingPath "steamapps\workshop\content\107410"
 $keysDir     = Join-Path $Config.ServerInstallPath "keys"
 New-Item -ItemType Directory -Path $keysDir -Force | Out-Null
 
-$success = 0
-$failed  = 0
+$toDownload = @()
+$success    = 0
+$failed     = 0
 
 foreach ($mod in $modList) {
-    $wid        = $mod.WorkshopId
-    $targetName = $mod.FolderName
-    $targetDir  = Join-Path $Config.ServerInstallPath $targetName
-
-    Write-Log "---" "Info"
-    Write-Log "Mod       : $targetName  (ID: $wid)" "Info"
-
-    # Skip if already deployed and not forced
+    $targetDir = Join-Path $Config.ServerInstallPath $mod.FolderName
     if ((Test-Path $targetDir) -and -not $Force) {
-        Write-Log "Already deployed at '$targetDir'. Use -Force to re-download." "Info"
+        Write-Log "Already deployed: $($mod.FolderName)  (ID: $($mod.WorkshopId))" "Info"
         $success++
-        continue
+    } else {
+        $toDownload += $mod
     }
+}
 
-    # --- SteamCMD download (via script file to handle special chars in password) ---
-    Write-Log "Downloading from Workshop..." "Info"
+# ---------------------------------------------------------------------------
+# Batch-download all missing mods in a single SteamCMD session
+# ---------------------------------------------------------------------------
+if ($toDownload.Count -gt 0) {
+    Write-Log "" "Info"
+    Write-Log "=== Downloading $($toDownload.Count) mod(s) in one SteamCMD session ===" "Header"
+
+    $dlCommands = @("force_install_dir `"$($Config.WorkshopStagingPath)`"")
+    foreach ($mod in $toDownload) {
+        Write-Log "  Queued: $($mod.FolderName)  (ID: $($mod.WorkshopId))" "Info"
+        $dlCommands += "workshop_download_item 107410 $($mod.WorkshopId) validate"
+    }
 
     $exitCode = Invoke-SteamCMD -SteamCMDExe $SteamCmd `
                                  -Username $steamUser `
                                  -Password $steamPass `
-                                 -Commands @(
-                                     "force_install_dir `"$($Config.WorkshopStagingPath)`""
-                                     "workshop_download_item 107410 $wid validate"
-                                 )
+                                 -Commands $dlCommands
 
     if ($exitCode -ne 0) {
-        Write-Log "SteamCMD failed for mod $wid (exit code $exitCode)." "Error"
-        $failed++
-        continue
+        Write-Log "SteamCMD batch download exited with code $exitCode." "Error"
+        Write-Log "Some mods may have failed. Check output above." "Warning"
     }
 
-    $downloadedPath = Join-Path $stagingRoot $wid
+    Write-Log "" "Info"
+    Write-Log "=== Deploying downloaded mods ===" "Header"
 
-    if (-not (Test-Path $downloadedPath)) {
-        Write-Log "Downloaded folder not found at '$downloadedPath'. Download may have failed." "Error"
-        $failed++
-        continue
-    }
+    # ---------------------------------------------------------------------------
+    # Deploy each downloaded mod
+    # ---------------------------------------------------------------------------
+    foreach ($mod in $toDownload) {
+        $wid            = $mod.WorkshopId
+        $targetName     = $mod.FolderName
+        $targetDir      = Join-Path $Config.ServerInstallPath $targetName
+        $downloadedPath = Join-Path $stagingRoot $wid
 
-    # --- Deploy: copy to server directory ---
-    Write-Log "Deploying to '$targetDir'..." "Info"
+        Write-Log "---" "Info"
+        Write-Log "Mod : $targetName  (ID: $wid)" "Info"
 
-    if (Test-Path $targetDir) {
-        Remove-Item $targetDir -Recurse -Force
-    }
-
-    Copy-Item -Path $downloadedPath -Destination $targetDir -Recurse -Force
-    Write-Log "Deployed: $targetName" "Success"
-
-    # Normalize all file and folder names to lowercase (Arma 3 is case-sensitive on Linux
-    # and some tools expect lowercase; on Windows this is a no-op but keeps things clean)
-    Get-ChildItem -Path $targetDir -Recurse | ForEach-Object {
-        $lower = $_.FullName.Replace($_.Name, $_.Name.ToLower())
-        if ($_.FullName -cne $lower) {
-            Rename-Item -Path $_.FullName -NewName $_.Name.ToLower() -ErrorAction SilentlyContinue
+        if (-not (Test-Path $downloadedPath)) {
+            Write-Log "Downloaded folder not found at '$downloadedPath'. Skipping." "Error"
+            $failed++
+            continue
         }
-    }
 
-    # --- Copy .bikey files to keys\ ---
-    $bikeys = @(Get-ChildItem -Path $targetDir -Recurse -Filter "*.bikey")
-    if ($bikeys.Count -gt 0) {
-        foreach ($key in $bikeys) {
-            $dest = Join-Path $keysDir $key.Name
-            Copy-Item -Path $key.FullName -Destination $dest -Force
-            Write-Log "  Key copied: $($key.Name)" "Info"
+        # Deploy: copy to server directory
+        Write-Log "Deploying to '$targetDir'..." "Info"
+        if (Test-Path $targetDir) {
+            Remove-Item $targetDir -Recurse -Force
         }
-    } else {
-        Write-Log "  No .bikey files found in $targetName." "Warning"
-    }
+        Copy-Item -Path $downloadedPath -Destination $targetDir -Recurse -Force
+        Write-Log "Deployed: $targetName" "Success"
 
-    $success++
+        # Copy .bikey files to keys\
+        $bikeys = @(Get-ChildItem -Path $targetDir -Recurse -Filter "*.bikey")
+        if ($bikeys.Count -gt 0) {
+            foreach ($key in $bikeys) {
+                Copy-Item -Path $key.FullName -Destination (Join-Path $keysDir $key.Name) -Force
+                Write-Log "  Key copied: $($key.Name)" "Info"
+            }
+        } else {
+            Write-Log "  No .bikey files found in $targetName." "Warning"
+        }
+
+        $success++
+    }
 }
 
 # ---------------------------------------------------------------------------
