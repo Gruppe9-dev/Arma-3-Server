@@ -137,21 +137,19 @@ foreach ($mod in $modList) {
         continue
     }
 
-    # --- SteamCMD download ---
+    # --- SteamCMD download (via script file to handle special chars in password) ---
     Write-Log "Downloading from Workshop..." "Info"
-    $steamArgs = @(
-        "+force_install_dir `"$($Config.WorkshopStagingPath)`""
-        "+login `"$steamUser`" `"$steamPass`""
-        "+workshop_download_item 107410 $wid validate"
-        "+quit"
-    )
 
-    $proc = Start-Process -FilePath $SteamCmd `
-                          -ArgumentList ($steamArgs -join " ") `
-                          -NoNewWindow -Wait -PassThru
+    $exitCode = Invoke-SteamCMD -SteamCMDExe $SteamCmd `
+                                 -Username $steamUser `
+                                 -Password $steamPass `
+                                 -Commands @(
+                                     "force_install_dir `"$($Config.WorkshopStagingPath)`""
+                                     "workshop_download_item 107410 $wid validate"
+                                 )
 
-    if ($proc.ExitCode -ne 0) {
-        Write-Log "SteamCMD failed for mod $wid (exit code $($proc.ExitCode))." "Error"
+    if ($exitCode -ne 0) {
+        Write-Log "SteamCMD failed for mod $wid (exit code $exitCode)." "Error"
         $failed++
         continue
     }

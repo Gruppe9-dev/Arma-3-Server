@@ -91,25 +91,22 @@ if ($Validate) {
     Write-Log "Validate: enabled" "Info"
 }
 
-$steamArgs = @(
-    "+force_install_dir `"$($Config.ServerInstallPath)`""
-    "+login `"$steamUser`" `"$steamPass`""
-    "+$appUpdateCmd"
-    "+quit"
-)
-
 # ---------------------------------------------------------------------------
-# Run SteamCMD
+# Run SteamCMD via script file (handles special chars in password safely)
 # ---------------------------------------------------------------------------
 Write-Log "Starting server update..." "Info"
 Write-Log "Target: $($Config.ServerInstallPath)" "Info"
 
-$process = Start-Process -FilePath $steamCmdExe `
-                          -ArgumentList ($steamArgs -join " ") `
-                          -NoNewWindow -Wait -PassThru
+$exitCode = Invoke-SteamCMD -SteamCMDExe $steamCmdExe `
+                              -Username $steamUser `
+                              -Password $steamPass `
+                              -Commands @(
+                                  "force_install_dir `"$($Config.ServerInstallPath)`""
+                                  $appUpdateCmd
+                              )
 
-if ($process.ExitCode -ne 0) {
-    Write-Log "SteamCMD exited with code $($process.ExitCode). Check output above." "Error"
+if ($exitCode -ne 0) {
+    Write-Log "SteamCMD exited with code $exitCode. Check output above." "Error"
     exit 1
 }
 

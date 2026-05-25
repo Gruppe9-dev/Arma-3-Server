@@ -102,20 +102,16 @@ if (-not $SkipServer) {
 
     Write-Log "Starting SteamCMD server installation. This may take a while..." "Info"
 
-    $steamArgs = @(
-        "+force_install_dir `"$($Config.ServerInstallPath)`""
-        "+login `"$steamUser`" `"$steamPass`""
-        "+app_update 233780 -beta $Branch"
-        "validate"
-        "+quit"
-    )
+    $exitCode = Invoke-SteamCMD -SteamCMDExe $steamCmdExe `
+                                 -Username $steamUser `
+                                 -Password $steamPass `
+                                 -Commands @(
+                                     "force_install_dir `"$($Config.ServerInstallPath)`""
+                                     "app_update 233780 -beta $Branch validate"
+                                 )
 
-    $process = Start-Process -FilePath $steamCmdExe `
-                              -ArgumentList ($steamArgs -join " ") `
-                              -NoNewWindow -Wait -PassThru
-
-    if ($process.ExitCode -ne 0) {
-        Write-Log "SteamCMD exited with code $($process.ExitCode). Check output above for errors." "Error"
+    if ($exitCode -ne 0) {
+        Write-Log "SteamCMD exited with code $exitCode. Check output above for errors." "Error"
         exit 1
     }
 

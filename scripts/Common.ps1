@@ -273,6 +273,69 @@ function Read-SteamPassword {
 }
 
 # ---------------------------------------------------------------------------
+# SteamCMD script-file helper
+# ---------------------------------------------------------------------------
+
+function Invoke-SteamCMD {
+    <#
+    .SYNOPSIS
+        Runs SteamCMD using a temporary script file (+runscript) so that passwords
+        with special characters (quotes, backslashes, $, #, etc.) are passed safely
+        without any shell escaping issues.
+
+    .PARAMETER SteamCMDPath
+        Full path to steamcmd.exe.
+    .PARAMETER Username
+        Steam account username.
+    .PARAMETER Password
+        Steam account password (plain text, never written to permanent storage).
+    .PARAMETER Commands
+        Array of SteamCMD commands to run after login, e.g.:
+          @('force_install_dir "C:\Server"', 'app_update 233780 -beta profiling validate')
+    .OUTPUTS
+        Exit code of the SteamCMD process.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]
+        [string]$SteamCMDExe,
+
+        [Parameter(Mandatory)]
+        [string]$Username,
+
+        [Parameter(Mandatory)]
+        [string]$Password,
+
+        [Parameter(Mandatory)]
+        [string[]]$Commands
+    )
+
+    # Write commands to a temporary script file.
+    # Using a file avoids all shell-quoting issues with special chars in passwords.
+    $scriptFile = [System.IO.Path]::GetTempFileName() -replace '\.tmp$', '.steamcmd'
+
+    try {
+        $lines = @("login `"$Username`" `"$Password`"")
+        $lines += $Commands
+        $lines += "quit"
+        Set-Content -Path $scriptFile -Value $lines -Encoding ASCII
+
+        Write-Log "Running SteamCMD (script: $scriptFile)..." "Info"
+
+        $proc = Start-Process -FilePath $SteamCMDExe `
+                               -ArgumentList "+runscript `"$scriptFile`"" `
+                               -NoNewWindow -Wait -PassThru
+
+        return $proc.ExitCode
+    } finally {
+        # Always delete the script file – it contains the password
+        if (Test-Path $scriptFile) {
+            Remove-Item $scriptFile -Force -ErrorAction SilentlyContinue
+        }
+    }
+}
+
+# ---------------------------------------------------------------------------
 # Arma 3 binary resolver
 # ---------------------------------------------------------------------------
 
