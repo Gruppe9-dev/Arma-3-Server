@@ -1,0 +1,42 @@
+// Arma 3 Server Difficulty Profile – _template
+// Rename this file to match the profile name, e.g.:
+//   profiles\mymission\mymission.Arma3Profile
+// The server loads it via: -profiles="...\profiles\mymission" -name=mymission
+
+class DifficultyPresets
+{
+    class CustomDifficulty
+    {
+        class Options
+        {
+            reducedDamage       = 0;
+            groupIndicators     = 0;
+            friendlyTags        = 0;
+            enemyTags           = 0;
+            detectedMines       = 0;
+            commands            = 0;
+            waypoints           = 0;
+            weaponInfo          = 1;
+            stanceIndicator     = 1;
+            staminaBar          = 1;
+            weaponCrosshair     = 0;
+            visionAid           = 0;
+            thirdPersonView     = 0;
+            cameraShake         = 1;
+            scoreTable          = 1;
+            deathMessages       = 1;
+            vonID               = 1;
+            mapContent          = 0;
+            autoReport          = 0;
+            multipleSaves       = 0;
+        };
+
+        aiLevelPreset = 3;
+
+        class AILevel
+        {
+            skillAI     = 0.70;
+            precisionAI = 0.50;
+        };
+    };
+};

@@ -1,0 +1,51 @@
+// Arma 3 Server Difficulty Profile – main
+// This file is loaded via: -profiles="...\profiles\main" -name=main
+// forcedDifficulty="Custom" in server.cfg points to the CustomDifficulty class below.
+// Reference: https://community.bistudio.com/wiki/Arma_3:_Difficulty_Settings
+
+class DifficultyPresets
+{
+    class CustomDifficulty
+    {
+        class Options
+        {
+            // ----- UI / HUD ----------------------------------------
+            reducedDamage       = 0;    // No reduced damage
+            groupIndicators     = 0;    // No squad markers
+            friendlyTags        = 0;    // No friendly name tags
+            enemyTags           = 0;    // No enemy tags
+            detectedMines       = 0;    // No mine detection markers
+            commands            = 0;    // No command menu hints
+            waypoints           = 0;    // No GPS waypoints shown
+            weaponInfo          = 1;    // Show weapon info (ammo/stance)
+            stanceIndicator     = 1;    // Show stance indicator
+            staminaBar          = 1;    // Show stamina bar
+            weaponCrosshair     = 0;    // No crosshair
+            visionAid           = 0;    // No enhanced vision
+
+            // ----- Camera -------------------------------------------
+            thirdPersonView     = 0;    // No 3rd person view
+            cameraShake         = 1;    // Camera shake enabled
+
+            // ----- Multiplayer HUD ----------------------------------
+            scoreTable          = 1;    // Show score table at end
+            deathMessages       = 1;    // Show kill/death messages
+            vonID               = 1;    // Show speaker name on VON
+
+            // ----- Map / Reporting ----------------------------------
+            mapContent          = 0;    // No player/unit icons on map
+            autoReport          = 0;    // No automatic enemy spotted reports
+            multipleSaves       = 0;    // No multiple save slots
+        };
+
+        // ----- AI Skill Preset ------------------------------------
+        // 0 = Low  |  1 = Normal  |  2 = High  |  3 = Custom (uses AILevel below)
+        aiLevelPreset = 3;
+
+        class AILevel
+        {
+            skillAI     = 0.70; // General skill      (0.0 – 1.0)
+            precisionAI = 0.50; // Aiming precision   (0.0 – 1.0)
+        };
+    };
+};
