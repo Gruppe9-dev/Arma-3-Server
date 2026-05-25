@@ -78,7 +78,7 @@ if ($PSCmdlet.ParameterSetName -eq "Single") {
         foreach ($p in $profiles) {
             $prof = Get-Profile -ProfileName $p
             if ($prof.PSObject.Properties.Name -contains "WorkshopIds") {
-                foreach ($entry in $prof.WorkshopIds) {
+                foreach ($entry in @($prof.WorkshopIds)) {
                     if (-not $seen.ContainsKey($entry.Id)) {
                         $seen[$entry.Id] = $true
                         $modList += @{ WorkshopId = $entry.Id; FolderName = $entry.FolderName }
@@ -88,12 +88,13 @@ if ($PSCmdlet.ParameterSetName -eq "Single") {
         }
     } else {
         $prof = Get-Profile -ProfileName $Profile
+        $workshopIds = @($prof.WorkshopIds)
         if (-not ($prof.PSObject.Properties.Name -contains "WorkshopIds") -or
-            $prof.WorkshopIds.Count -eq 0) {
+            $workshopIds.Count -eq 0) {
             Write-Log "Profile '$Profile' has no WorkshopIds defined in profile.json." "Warning"
             exit 0
         }
-        foreach ($entry in $prof.WorkshopIds) {
+        foreach ($entry in $workshopIds) {
             $modList += @{ WorkshopId = $entry.Id; FolderName = $entry.FolderName }
         }
     }
@@ -182,7 +183,7 @@ foreach ($mod in $modList) {
     }
 
     # --- Copy .bikey files to keys\ ---
-    $bikeys = Get-ChildItem -Path $targetDir -Recurse -Filter "*.bikey"
+    $bikeys = @(Get-ChildItem -Path $targetDir -Recurse -Filter "*.bikey")
     if ($bikeys.Count -gt 0) {
         foreach ($key in $bikeys) {
             $dest = Join-Path $keysDir $key.Name
