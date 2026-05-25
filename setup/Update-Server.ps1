@@ -75,9 +75,7 @@ if (-not (Test-Path $steamCmdExe)) {
     exit 1
 }
 
-$steamUser = $Config.SteamUsername
-$steamPass = Read-SteamPassword -Username $steamUser -Config $Config
-
+# App ID 233780 (Arma 3 Dedicated Server) is a free anonymous download.
 $appUpdateCmd = "app_update 233780"
 if ($Branch) {
     $appUpdateCmd += " -beta $Branch"
@@ -98,8 +96,7 @@ Write-Log "Starting server update..." "Info"
 Write-Log "Target: $($Config.ServerInstallPath)" "Info"
 
 $exitCode = Invoke-SteamCMD -SteamCMDExe $steamCmdExe `
-                              -Username $steamUser `
-                              -Password $steamPass `
+                              -Anonymous `
                               -Commands @(
                                   "force_install_dir `"$($Config.ServerInstallPath)`""
                                   $appUpdateCmd

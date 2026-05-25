@@ -96,15 +96,12 @@ if (-not $SkipServer) {
 
     New-Item -ItemType Directory -Path $Config.ServerInstallPath -Force | Out-Null
 
-    # Prompt for Steam credentials (skipped if STEAM_PASSWORD is set in .env)
-    $steamUser = $Config.SteamUsername
-    $steamPass = Read-SteamPassword -Username $steamUser -Config $Config
-
-    Write-Log "Starting SteamCMD server installation. This may take a while..." "Info"
+    # App ID 233780 (Arma 3 Dedicated Server) is a free anonymous download.
+    # No Steam account required for server installation.
+    Write-Log "Starting SteamCMD server installation (anonymous). This may take a while..." "Info"
 
     $exitCode = Invoke-SteamCMD -SteamCMDExe $steamCmdExe `
-                                 -Username $steamUser `
-                                 -Password $steamPass `
+                                 -Anonymous `
                                  -Commands @(
                                      "force_install_dir `"$($Config.ServerInstallPath)`""
                                      "app_update 233780 -beta $Branch validate"

@@ -152,7 +152,9 @@ function Get-FrameworkConfig {
     Write-Log "Config loaded from .env ($envFile)" "Info"
 
     # --- Validate required keys ---
-    $required = @("ServerInstallPath", "SteamCMDPath", "WorkshopStagingPath", "SteamUsername")
+    # SteamUsername is only needed for Workshop mod downloads (Sync-Mods.ps1),
+    # not for server installation/updates (those use anonymous login).
+    $required = @("ServerInstallPath", "SteamCMDPath", "WorkshopStagingPath")
     foreach ($key in $required) {
         $prop = $config.PSObject.Properties[$key]
         $val  = if ($prop) { $prop.Value } else { $null }
@@ -161,9 +163,14 @@ function Get-FrameworkConfig {
             Write-Log "Set $(($script:EnvKeyMap.GetEnumerator() | Where-Object Value -eq $key).Key) in your .env file." "Error"
             exit 1
         }
-        if ($key -eq "SteamUsername" -and $val -eq "your_steam_username") {
-            Write-Log "STEAM_USERNAME is still set to the placeholder value. Edit your .env file." "Warning"
-        }
+    }
+
+    # Warn if SteamUsername is still placeholder (needed later for Sync-Mods.ps1)
+    $steamUser = $config.PSObject.Properties["SteamUsername"]
+    if (-not $steamUser -or [string]::IsNullOrWhiteSpace($steamUser.Value)) {
+        Write-Log "STEAM_USERNAME is not set in .env. This is required for Sync-Mods.ps1." "Warning"
+    } elseif ($steamUser.Value -eq "your_steam_username") {
+        Write-Log "STEAM_USERNAME is still set to the placeholder value. Edit your .env before running Sync-Mods.ps1." "Warning"
     }
 
     return $config
@@ -283,12 +290,16 @@ function Invoke-SteamCMD {
         with special characters (quotes, backslashes, $, #, etc.) are passed safely
         without any shell escaping issues.
 
-    .PARAMETER SteamCMDPath
+    .PARAMETER SteamCMDExe
         Full path to steamcmd.exe.
+    .PARAMETER Anonymous
+        Use anonymous login. No Username / Password required.
+        Suitable for App ID 233780 (Arma 3 Dedicated Server).
     .PARAMETER Username
-        Steam account username.
+        Steam account username. Required unless -Anonymous is set.
     .PARAMETER Password
         Steam account password (plain text, never written to permanent storage).
+        Required unless -Anonymous is set.
     .PARAMETER Commands
         Array of SteamCMD commands to run after login, e.g.:
           @('force_install_dir "C:\Server"', 'app_update 233780 -beta profiling validate')
@@ -300,27 +311,38 @@ function Invoke-SteamCMD {
         [Parameter(Mandatory)]
         [string]$SteamCMDExe,
 
-        [Parameter(Mandatory)]
-        [string]$Username,
+        [switch]$Anonymous,
 
-        [Parameter(Mandatory)]
-        [string]$Password,
+        [string]$Username = "",
+
+        [string]$Password = "",
 
         [Parameter(Mandatory)]
         [string[]]$Commands
     )
+
+    if (-not $Anonymous -and [string]::IsNullOrWhiteSpace($Username)) {
+        Write-Log "Invoke-SteamCMD: -Username is required when not using -Anonymous." "Error"
+        exit 1
+    }
 
     # Write commands to a temporary script file.
     # Using a file avoids all shell-quoting issues with special chars in passwords.
     $scriptFile = [System.IO.Path]::GetTempFileName() -replace '\.tmp$', '.steamcmd'
 
     try {
-        $lines = @("login `"$Username`" `"$Password`"")
+        if ($Anonymous) {
+            $loginLine = "login anonymous"
+            Write-Log "Running SteamCMD as anonymous..." "Info"
+        } else {
+            $loginLine = "login `"$Username`" `"$Password`""
+            Write-Log "Running SteamCMD as '$Username'..." "Info"
+        }
+
+        $lines  = @($loginLine)
         $lines += $Commands
         $lines += "quit"
         Set-Content -Path $scriptFile -Value $lines -Encoding ASCII
-
-        Write-Log "Running SteamCMD (script: $scriptFile)..." "Info"
 
         $proc = Start-Process -FilePath $SteamCMDExe `
                                -ArgumentList "+runscript `"$scriptFile`"" `
@@ -328,7 +350,7 @@ function Invoke-SteamCMD {
 
         return $proc.ExitCode
     } finally {
-        # Always delete the script file – it contains the password
+        # Always delete the script file – it may contain credentials
         if (Test-Path $scriptFile) {
             Remove-Item $scriptFile -Force -ErrorAction SilentlyContinue
         }
