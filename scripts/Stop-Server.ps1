@@ -92,7 +92,7 @@ function Stop-ByPidFile {
         return $false
     }
 
-    $pids = Get-Content $PidFile | Where-Object { $_ -match '^\d+$' } | ForEach-Object { [int]$_ }
+    $pids = @(Get-Content $PidFile | Where-Object { $_ -match '^\d+$' } | ForEach-Object { [int]$_ })
 
     if ($pids.Count -eq 0) {
         Write-Log "$Label PID file is empty." "Warning"
