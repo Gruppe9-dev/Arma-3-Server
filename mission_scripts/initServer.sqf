@@ -17,33 +17,28 @@ private _hcWaitTimeout     = 60;  // max seconds to wait for HCs before giving u
 private _rebalanceInterval = 60;  // seconds between periodic rebalances
 private _debug             = true;
 
+// Store config in missionNamespace – private variables don't survive CBA callbacks
+missionNamespace setVariable ["HC_debug",             _debug];
+missionNamespace setVariable ["HC_rebalanceInterval", _rebalanceInterval];
+
 // ---------------------------------------------------------------------------
-// Helper: get connected HCs via the dedicated SQF variable
-// Falls back to allPlayers filter if headlessClients is empty
+// Helper: get connected HCs
+// Stored in missionNamespace so CBA callbacks can reach it
 // ---------------------------------------------------------------------------
-private _fnc_getHCs = {
+missionNamespace setVariable ["HC_fnc_getHCs", {
     private _hcs = headlessClients;
-    // fallback: allPlayers that are not real players and not the server
     if (_hcs isEqualTo []) then {
         _hcs = allPlayers select { !isPlayer _x && !(isNull _x) };
     };
     _hcs select { !isNull _x }
-};
+}];
 
 // ---------------------------------------------------------------------------
-// Helper: find the HC with the fewest assigned groups (load balancing)
+// Helper: transfer all AI groups to HCs with load balancing
 // ---------------------------------------------------------------------------
-private _fnc_leastLoadedHC = {
-    params ["_hcs"];
-    private _loads = _hcs apply { [owner _x, {groupOwner _x == owner _this} count allGroups] };
-    (_loads select { _x select 1 == ((_loads apply { _x select 1 }) select [0, count _loads] call BIS_fnc_arraySortBy) select 0 }) select 0 select 0
-};
-
-// ---------------------------------------------------------------------------
-// Helper: transfer all AI groups – each group goes to the least loaded HC
-// ---------------------------------------------------------------------------
-private _fnc_transfer = {
-    private _hcs = [] call _fnc_getHCs;
+missionNamespace setVariable ["HC_fnc_transfer", {
+    private _debug    = missionNamespace getVariable ["HC_debug", false];
+    private _hcs      = [] call (missionNamespace getVariable "HC_fnc_getHCs");
 
     if (_hcs isEqualTo []) exitWith {
         if (_debug) then { diag_log "[HC-Transfer] No HCs found – skipping." };
@@ -58,8 +53,9 @@ private _fnc_transfer = {
         if ((count units _grp) == 0) exitWith {};
         if (groupOwner _grp in _hcOwners) exitWith {};  // already on an HC
 
-        // Pick HC with fewest groups – capture owner ID in _hcId so the
-        // inner count-condition _x (= a group) does not shadow the outer _x.
+        // Pick HC with fewest groups.
+        // _hcId captures the outer forEach _x so the inner count-condition
+        // can use _x freely for the group without shadowing the owner ID.
         private _best      = _hcOwners select 0;
         private _hcId      = _best;
         private _bestCount = { groupOwner _x == _hcId } count allGroups;
@@ -74,65 +70,68 @@ private _fnc_transfer = {
         _transferred = _transferred + 1;
 
         if (_debug) then {
-            diag_log format ["[HC-Transfer] %1 -> HC owner %2 (groups on that HC now: %3)",
+            diag_log format ["[HC-Transfer] %1 -> owner %2 (HC groups now: %3)",
                 _grp, _best, _bestCount + 1];
         };
-
     } forEach allGroups;
 
     if (_debug) then {
-        private _dist = _hcOwners apply { format ["HC%1: %2 groups", _x, {groupOwner _x == _x} count allGroups] };
+        private _dist = _hcOwners apply {
+            private _id = _x;
+            format ["HC%1: %2 grps", _id, { groupOwner _x == _id } count allGroups]
+        };
         diag_log format ["[HC-Transfer] Done. Moved: %1 | Distribution: %2", _transferred, _dist];
     };
-};
+}];
 
-// ---------------------------------------------------------------------------
-// Wait until at least one HC connects, then do initial transfer + setup rebalance
-// ---------------------------------------------------------------------------
 if (_debug) then {
     diag_log "[HC-Transfer] Script loaded. Waiting for Headless Clients...";
 };
 
+// ---------------------------------------------------------------------------
+// Wait until at least one HC connects, then initial transfer + rebalance loop
+// ---------------------------------------------------------------------------
 [
-    // Condition: at least 1 HC present
-    { (count ([] call (_thisArgs select 0))) > 0 },
+    // Condition – checked every frame by CBA
+    { count ([] call (missionNamespace getVariable "HC_fnc_getHCs")) > 0 },
 
-    // On success: transfer and start periodic rebalance
+    // On success
     {
-        params ["_fnc_getHCs", "_fnc_transfer", "_rebalanceInterval", "_debug"];
-        private _hcCount = count ([] call _fnc_getHCs);
+        private _debug   = missionNamespace getVariable ["HC_debug", false];
+        private _hcCount = count ([] call (missionNamespace getVariable "HC_fnc_getHCs"));
+
         if (_debug) then {
             diag_log format ["[HC-Transfer] %1 HC(s) connected. Running initial transfer.", _hcCount];
         };
-        [] call _fnc_transfer;
 
+        [] call (missionNamespace getVariable "HC_fnc_transfer");
+
+        // Periodic rebalance
         [
-            { [] call (_thisArgs select 0); },
-            [_fnc_transfer],
-            _rebalanceInterval,
-            _rebalanceInterval
+            { [] call (missionNamespace getVariable "HC_fnc_transfer"); },
+            [],
+            missionNamespace getVariable ["HC_rebalanceInterval", 60]
         ] call CBA_fnc_addPerFrameHandler;
     },
 
-    [_fnc_getHCs, _fnc_transfer, _rebalanceInterval, _debug],
+    [],  // no args needed – functions are in missionNamespace
 
     // Timeout
     _hcWaitTimeout,
 
-    // On timeout: still set up rebalance so late-connecting HCs get groups
+    // On timeout – still start rebalance loop so late-connecting HCs get groups
     {
-        params ["_fnc_getHCs", "_fnc_transfer", "_rebalanceInterval", "_debug"];
+        private _debug = missionNamespace getVariable ["HC_debug", false];
         if (_debug) then {
             diag_log "[HC-Transfer] Timeout waiting for HCs. Rebalance loop still active.";
         };
         [
-            { [] call (_thisArgs select 0); },
-            [_fnc_transfer],
-            _rebalanceInterval,
-            _rebalanceInterval
+            { [] call (missionNamespace getVariable "HC_fnc_transfer"); },
+            [],
+            missionNamespace getVariable ["HC_rebalanceInterval", 60]
         ] call CBA_fnc_addPerFrameHandler;
     },
 
-    [_fnc_getHCs, _fnc_transfer, _rebalanceInterval, _debug]
+    []  // no args needed
 
 ] call CBA_fnc_waitUntilAndExecute;
