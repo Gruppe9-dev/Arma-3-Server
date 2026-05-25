@@ -66,7 +66,9 @@ function Read-EnvFile {
     Get-Content $Path -Encoding UTF8 | ForEach-Object {
         $line = $_.Trim()
 
-        # Skip comments and blank lines
+        # Skip full-line comments and blank lines
+        # NOTE: inline comments (value = something # comment) are NOT supported.
+        # Paths like C:\#Folder would be wrongly truncated. Use comment-only lines.
         if ($line -eq '' -or $line.StartsWith('#')) { return }
 
         # Split on first '=' only
@@ -76,15 +78,15 @@ function Read-EnvFile {
         $key   = $line.Substring(0, $eqIdx).Trim()
         $value = $line.Substring($eqIdx + 1).Trim()
 
-        # Strip optional surrounding quotes (single or double)
-        if (($value.StartsWith('"') -and $value.EndsWith('"')) -or
-            ($value.StartsWith("'") -and $value.EndsWith("'"))) {
-            $value = $value.Substring(1, $value.Length - 2)
-        }
-
-        # Strip inline comments (value = something  # comment)
-        if ($value -match '^([^#]*?)\s*#') {
-            $value = $Matches[1].Trim()
+        # Strip optional surrounding quotes (single or double).
+        # Only strip if BOTH the first and last character are the same quote type.
+        if ($value.Length -ge 2) {
+            $first = $value[0]
+            $last  = $value[$value.Length - 1]
+            if (($first -eq '"' -and $last -eq '"') -or
+                ($first -eq "'" -and $last -eq "'")) {
+                $value = $value.Substring(1, $value.Length - 2)
+            }
         }
 
         if ($key -ne '') {
