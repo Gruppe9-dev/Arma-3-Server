@@ -280,6 +280,105 @@ function Read-SteamPassword {
 }
 
 # ---------------------------------------------------------------------------
+# Detached process launcher (SSH-safe)
+# ---------------------------------------------------------------------------
+
+function Start-DetachedProcess {
+    <#
+    .SYNOPSIS
+        Start a process fully detached from the current SSH job object.
+
+    .DESCRIPTION
+        Standard Start-Process inherits the SSH session's Windows Job Object.
+        When the SSH connection closes, Windows terminates every process in that
+        job — including the game server.
+
+        This function calls CreateProcess() with CREATE_BREAKAWAY_FROM_JOB so
+        the new process is outside the SSH job and survives the session end.
+
+    .PARAMETER FilePath
+        Full path to the executable.
+
+    .PARAMETER ArgumentList
+        Array of arguments to pass. They are joined with spaces.
+
+    .PARAMETER WorkingDirectory
+        Working directory for the new process.
+
+    .OUTPUTS
+        PID of the new process as [int].
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)] [string]   $FilePath,
+        [string[]]                         $ArgumentList    = @(),
+        [string]                           $WorkingDirectory = $PWD.Path
+    )
+
+    # Define the Win32 shim only once per PowerShell session
+    if (-not ([System.Management.Automation.PSTypeName]'Arma3.ProcessHelper').Type) {
+        Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+namespace Arma3 {
+    public class ProcessHelper {
+        [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+        public struct STARTUPINFO {
+            public int    cb;
+            public string lpReserved, lpDesktop, lpTitle;
+            public uint   dwX, dwY, dwXSize, dwYSize;
+            public uint   dwXCountChars, dwYCountChars, dwFillAttribute, dwFlags;
+            public short  wShowWindow, cbReserved2;
+            public IntPtr lpReserved2, hStdInput, hStdOutput, hStdError;
+        }
+        [StructLayout(LayoutKind.Sequential)]
+        public struct PROCESS_INFORMATION {
+            public IntPtr hProcess, hThread;
+            public uint   dwProcessId, dwThreadId;
+        }
+        [DllImport("kernel32.dll", SetLastError=true, CharSet=CharSet.Unicode)]
+        public static extern bool CreateProcess(
+            string lpApplicationName, string lpCommandLine,
+            IntPtr lpProcessAttributes, IntPtr lpThreadAttributes,
+            bool bInheritHandles, uint dwCreationFlags,
+            IntPtr lpEnvironment, string lpCurrentDirectory,
+            ref STARTUPINFO lpStartupInfo,
+            out PROCESS_INFORMATION lpProcessInformation);
+        [DllImport("kernel32.dll", SetLastError=true)]
+        public static extern bool CloseHandle(IntPtr h);
+
+        // CREATE_BREAKAWAY_FROM_JOB | CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW
+        public const uint DETACH_FLAGS = 0x01000200u | 0x08000000u;
+    }
+}
+'@
+    }
+
+    $si       = New-Object Arma3.ProcessHelper+STARTUPINFO
+    $si.cb    = [System.Runtime.InteropServices.Marshal]::SizeOf($si)
+    $pi       = New-Object Arma3.ProcessHelper+PROCESS_INFORMATION
+    $cmdLine  = "`"$FilePath`"" + $(if ($ArgumentList) { " " + ($ArgumentList -join " ") } else { "" })
+
+    $ok = [Arma3.ProcessHelper]::CreateProcess(
+        $null, $cmdLine,
+        [IntPtr]::Zero, [IntPtr]::Zero,
+        $false, [Arma3.ProcessHelper]::DETACH_FLAGS,
+        [IntPtr]::Zero, $WorkingDirectory,
+        [ref]$si, [ref]$pi
+    )
+
+    if (-not $ok) {
+        $err = [System.Runtime.InteropServices.Marshal]::GetLastWin32Error()
+        throw "CreateProcess failed (Win32 error $err): $(New-Object System.ComponentModel.Win32Exception($err))"
+    }
+
+    [Arma3.ProcessHelper]::CloseHandle($pi.hProcess) | Out-Null
+    [Arma3.ProcessHelper]::CloseHandle($pi.hThread)  | Out-Null
+
+    return [int]$pi.dwProcessId
+}
+
+# ---------------------------------------------------------------------------
 # SteamCMD script-file helper
 # ---------------------------------------------------------------------------
 

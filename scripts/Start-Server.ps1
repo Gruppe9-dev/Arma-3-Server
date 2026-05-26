@@ -145,16 +145,15 @@ Write-Log "Launching server..." "Info"
 Write-Log "  $binary $($serverArgs -join ' ')" "Info"
 Write-Log "" "Info"
 
-$serverProc = Start-Process -FilePath $binary `
-                             -ArgumentList ($serverArgs -join " ") `
-                             -WorkingDirectory $Config.ServerInstallPath `
-                             -PassThru
+$serverPid = Start-DetachedProcess -FilePath $binary `
+                                    -ArgumentList $serverArgs `
+                                    -WorkingDirectory $Config.ServerInstallPath
 
-Write-Log "Server started  (PID: $($serverProc.Id))" "Success"
+Write-Log "Server started  (PID: $serverPid)" "Success"
 
 # Persist the PID for Stop-Server.ps1
 $pidFile = Join-Path $Prof.ProfileDir "server.pid"
-Set-Content -Path $pidFile -Value $serverProc.Id -Encoding ASCII
+Set-Content -Path $pidFile -Value $serverPid -Encoding ASCII
 Write-Log "PID saved to: $pidFile" "Info"
 
 # ---------------------------------------------------------------------------
@@ -189,15 +188,14 @@ if ($hcCount -gt 0 -and -not $NoHC) {
     for ($i = 1; $i -le $hcCount; $i++) {
         Write-Log "Starting HC $i / $hcCount ..." "Info"
 
-        $hcProc = & $hcScript `
+        $hcReturnedPid = & $hcScript `
             -Profile $Profile `
             -HCIndex $i `
             -ServerHost "127.0.0.1" `
             -PassThru
 
-        if ($hcProc) {
-            $hcPids += $hcProc.Id
-            Write-Log "HC $i started (PID: $($hcProc.Id))" "Success"
+        if ($hcReturnedPid) {
+            $hcPids += $hcReturnedPid
         }
 
         # Small stagger to avoid simultaneous logins
@@ -219,7 +217,7 @@ Write-Log "" "Info"
 Write-Log "=== Server is running ===" "Header"
 Write-Log "Profile  : $Profile" "Info"
 Write-Log "Port     : $($Prof.Port)" "Info"
-Write-Log "PID      : $($serverProc.Id)" "Info"
+Write-Log "PID      : $serverPid" "Info"
 if ($hcCount -gt 0 -and -not $NoHC) {
     Write-Log "HCs      : $hcCount" "Info"
 }

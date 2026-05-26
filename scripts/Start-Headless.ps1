@@ -116,13 +116,12 @@ Write-Log "Command: $binary $($hcArgs -join ' ')" "Info"
 # ---------------------------------------------------------------------------
 # Start HC process
 # ---------------------------------------------------------------------------
-$proc = Start-Process -FilePath $binary `
-                       -ArgumentList ($hcArgs -join " ") `
-                       -WorkingDirectory $Config.ServerInstallPath `
-                       -PassThru
+$hcPid = Start-DetachedProcess -FilePath $binary `
+                                -ArgumentList $hcArgs `
+                                -WorkingDirectory $Config.ServerInstallPath
 
-Write-Log "HC $HCIndex started (PID: $($proc.Id))" "Success"
+Write-Log "HC $HCIndex started (PID: $hcPid)" "Success"
 
 if ($PassThru) {
-    return $proc
+    return $hcPid
 }

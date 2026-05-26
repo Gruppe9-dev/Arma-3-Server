@@ -112,8 +112,10 @@ def split_output(text: str, size: int = config.MAX_CHARS) -> list[str]:
 
 # Lines containing these strings are dropped from Discord output (verbose noise)
 _SKIP_PATTERNS = [
+    # General framework noise
     "already deployed",
     "config loaded from",
+    # SteamCMD boilerplate
     "running steamcmd",
     "redirecting stderr",
     "logging directory",
@@ -126,6 +128,17 @@ _SKIP_PATTERNS = [
     "waiting for user info",
     "unloading steam api",
     "please use force_install_dir",
+    # Server start verbose lines
+    "command:",           # full command-line with all mods (huge)
+    "launching server",
+    "waiting for server on port",
+    "server did not respond to udp",
+    "starting hcs in",
+    "server    :",        # detail block inside HC start
+    "hc name   :",
+    "fps limit :",
+    "-mod=",              # stray mod-list continuation lines
+    "connect=127",        # HC connect line
 ]
 
 # Lines containing these strings are always kept
@@ -140,7 +153,11 @@ _KEEP_PATTERNS = [
     "deployed:",
     "key copied",
     "next step",
-    "exit",
+    "pid      :",
+    "port     :",
+    "profile  :",
+    "hcs      :",
+    "to stop",
 ]
 
 
