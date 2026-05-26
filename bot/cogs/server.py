@@ -130,6 +130,7 @@ class ServerCog(commands.Cog):
     async def _get_proc_stats(self, pid: int) -> dict | None:
         """Return CPU/RAM/uptime dict for the given PID, or None if gone."""
         ps = (
+            "$ProgressPreference = 'SilentlyContinue'; "
             f"$p = Get-Process -Id {pid} -ErrorAction SilentlyContinue; "
             "if ($p) { "
             "  $up = [math]::Floor(((Get-Date) - $p.StartTime).TotalSeconds); "
@@ -137,10 +138,18 @@ class ServerCog(commands.Cog):
             "} else { 'stopped' }"
         )
         _, out = await ssh_helper.run_ps_command(ps)
-        out = out.strip()
-        if not out or out == "stopped":
+        # Pick first line that matches the expected format (skip CLIXML noise)
+        raw = None
+        for line in out.splitlines():
+            line = line.strip()
+            if line == "stopped":
+                return None
+            if re.match(r"^[\d.]+\|\d+\|\d+$", line):
+                raw = line
+                break
+        if not raw:
             return None
-        parts = out.split("|")
+        parts = raw.split("|")
         if len(parts) != 3:
             return None
         try:
@@ -175,6 +184,7 @@ class ServerCog(commands.Cog):
         """SSH: read server.pid and Port from profile.json. Returns (pid, port)."""
         base = config.SCRIPTS_PATH.replace("\\", "/")
         ps = (
+            "$ProgressPreference = 'SilentlyContinue'; "
             f"$serverPid = (Get-Content '{base}/profiles/{profile}/server.pid' "
             f"  -ErrorAction SilentlyContinue | Select-Object -First 1).Trim(); "
             f"$serverPort = (Get-Content '{base}/profiles/{profile}/profile.json' "
@@ -182,12 +192,13 @@ class ServerCog(commands.Cog):
             '"$serverPid|$serverPort"'
         )
         _, out = await ssh_helper.run_ps_command(ps)
-        out = out.strip()
-        m = re.match(r"^(\d+)\|(\d+)$", out)
-        if not m:
-            logger.warning("Could not parse pid/port from: %r", out)
-            return None
-        return int(m.group(1)), int(m.group(2))
+        # Strip CLIXML noise and grab only the first line that matches pid|port
+        for line in out.splitlines():
+            m = re.match(r"^(\d+)\|(\d+)$", line.strip())
+            if m:
+                return int(m.group(1)), int(m.group(2))
+        logger.warning("Could not parse pid/port from: %r", out)
+        return None
 
     # ── internal: background live-status loop ─────────────────────────────────
 
