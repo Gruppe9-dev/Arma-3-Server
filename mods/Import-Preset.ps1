@@ -274,7 +274,8 @@ function Format-ProfileJson {
     & $writeStringArray "ServerMods" $ServerMods $true
     & $writeStringArray "ExtraArgs"  $ExtraArgs  $true
 
-    # WorkshopIds – inline objects, Id and FolderName column-padded for readability
+    # WorkshopIds – inline objects with column-aligned spacing BETWEEN fields,
+    # never inside the string values (trailing spaces in paths break Copy-Item).
     if ($WorkshopIds.Count -eq 0) {
         $null = $sb.Append("  `"WorkshopIds`": []$nl")
     } else {
@@ -283,12 +284,13 @@ function Format-ProfileJson {
 
         $null = $sb.Append("  `"WorkshopIds`": [$nl")
         for ($i = 0; $i -lt $WorkshopIds.Count; $i++) {
-            $m    = $WorkshopIds[$i]
-            $c    = if ($i -lt $WorkshopIds.Count - 1) { ',' } else { '' }
-            $idP  = "$($m.Id)".PadRight($maxId)
-            $fldP = "$($m.FolderName)".PadRight($maxFld)
-            $nameEsc = "$($m._name)" -replace '\\', '\\' -replace '"', '\"'
-            $null = $sb.Append("    { `"Id`": `"$idP`",  `"FolderName`": `"$fldP`",  `"_name`": `"$nameEsc`" }$c$nl")
+            $m        = $WorkshopIds[$i]
+            $c        = if ($i -lt $WorkshopIds.Count - 1) { ',' } else { '' }
+            $nameEsc  = "$($m._name)" -replace '\\', '\\' -replace '"', '\"'
+            # Padding goes AFTER the comma, not inside the string value
+            $idGap    = ' ' * ($maxId  - "$($m.Id)".Length  + 2)
+            $fldGap   = ' ' * ($maxFld - "$($m.FolderName)".Length + 2)
+            $null = $sb.Append("    { `"Id`": `"$($m.Id)`",$idGap`"FolderName`": `"$($m.FolderName)`",$fldGap`"_name`": `"$nameEsc`" }$c$nl")
         }
         $null = $sb.Append("  ]$nl")
     }
