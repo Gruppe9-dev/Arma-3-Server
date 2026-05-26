@@ -1,0 +1,17 @@
+# SSH keys — volume-mounted at runtime, never bake into the image
+ssh_key
+ssh_key.pub
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# Local env file — also volume-mounted
+.env
+
+# Runtime logs (written inside the container to /app/logs/)
+logs/
+
+# Setup scripts — only needed on the host, not inside the container
+setup-ssh-key.ps1

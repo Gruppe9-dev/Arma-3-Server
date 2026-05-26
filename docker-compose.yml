@@ -1,0 +1,15 @@
+services:
+  arma-bot:
+    build: ./bot
+    container_name: arma3-discord-bot
+    restart: unless-stopped
+    volumes:
+      # Config (read-only inside the container)
+      - ./.env:/app/.env:ro
+      # SSH private key for host access (generate once with bot/setup-ssh-key.ps1)
+      - ./bot/ssh_key:/app/ssh_key:ro
+      # Persist bot logs on the host
+      - ./bot/logs:/app/logs
+    extra_hosts:
+      # Allows the container to reach the Windows host via 'host.docker.internal'
+      - "host.docker.internal:host-gateway"
