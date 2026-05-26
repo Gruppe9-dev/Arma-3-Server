@@ -41,5 +41,8 @@ SSH_KEY_PATH     = os.getenv("BOT_SSH_KEY_PATH", "/app/ssh_key")
 # e.g. C:\#Arma Server\Framework\Arma-3-Server
 SCRIPTS_PATH     = os.environ["BOT_SCRIPTS_PATH"]
 
+# Host used by the bot container to reach the Arma 3 server query port (A2S)
+SERVER_HOST      = os.getenv("BOT_SERVER_HOST", "host.docker.internal")
+
 # ── Misc ───────────────────────────────────────────────────────────────────────
 MAX_CHARS        = 1900   # Discord message limit is 2000; keep buffer for code-block markers

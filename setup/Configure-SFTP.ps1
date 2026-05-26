@@ -117,7 +117,7 @@ $matchBlock = @"
 # ── Arma 3 Mission Creator SFTP (added by Configure-SFTP.ps1) ──────────────────
 Match User $SftpUser
     ForceCommand internal-sftp
-    ChrootDirectory "$ServerInstallPath"
+    ChrootDirectory "$MissionPath"
     PermitTunnel no
     AllowAgentForwarding no
     AllowTcpForwarding no
@@ -150,6 +150,6 @@ Write-Host "   Protocol : SFTP" -ForegroundColor Yellow
 Write-Host "   User     : $SftpUser" -ForegroundColor Yellow
 Write-Host "   Password : (as configured above)" -ForegroundColor Yellow
 Write-Host ""
-Write-Host " Accessible paths (relative to ChrootDirectory $ServerInstallPath):" -ForegroundColor White
-Write-Host "   /mpmissions/   read+write (upload .pbo mission files here)" -ForegroundColor Yellow
+Write-Host " Chroot directory (root for SFTP session): $MissionPath" -ForegroundColor White
+Write-Host "   /              upload .pbo and .sqm mission files here" -ForegroundColor Yellow
 Write-Host "================================================================" -ForegroundColor Green
