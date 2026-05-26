@@ -107,13 +107,17 @@ def _build_live_embed(
         embed.add_field(name="🗺️  Mission", value="Starting…", inline=True)
 
     proc_count = proc.get("proc_count", 1)
-    proc_label = f"{proc_count} process(es)"   # server + HCs
+    cores      = proc.get("cores", 1)
+    cpu_pct    = proc.get("cpu_pct", 0.0)
+    # Show % of total system; append per-core equivalent for context
+    per_core   = round(cpu_pct * cores / 100, 1) if cores else cpu_pct
+    cpu_label  = f"{cpu_pct:.1f}%  (~{per_core:.1f} cores)"
 
-    embed.add_field(name="⏱️  Uptime",    value=_fmt_uptime(proc["uptime_s"]),       inline=True)
-    embed.add_field(name="💻  CPU",       value=f"{proc['cpu']:.1f}s total",          inline=True)
-    embed.add_field(name="💾  RAM",       value=f"{proc['ram_mb']:,} MB",             inline=True)
-    embed.add_field(name="🔢  PID",       value=str(proc["pid"]),                     inline=True)
-    embed.add_field(name="⚙️  Processes", value=proc_label,                           inline=True)
+    embed.add_field(name="⏱️  Uptime",    value=_fmt_uptime(proc["uptime_s"]),  inline=True)
+    embed.add_field(name="💻  CPU",       value=cpu_label,                       inline=True)
+    embed.add_field(name="💾  RAM",       value=f"{proc['ram_mb']:,} MB",        inline=True)
+    embed.add_field(name="🔢  PID",       value=str(proc["pid"]),                inline=True)
+    embed.add_field(name="⚙️  Processes", value=f"{proc_count} ({cores} cores)", inline=True)
 
     embed.set_footer(text=f"Profile: {profile}  •  CPU & RAM = server + all HCs  •  refresh every {_LIVE_UPDATE_INTERVAL}s")
     return embed
@@ -145,26 +149,32 @@ class ServerCog(commands.Cog):
             f"$main = Get-Process -Id {pid} -ErrorAction SilentlyContinue; "
             "if (-not $main) { 'stopped'; exit } "
             "$up = [math]::Floor(((Get-Date) - $main.StartTime).TotalSeconds); "
-            # Aggregate all arma3 processes for total CPU + RAM
-            "$all = Get-Process -Name 'arma3*' -ErrorAction SilentlyContinue; "
-            "$totalCpu = [math]::Round(($all | Measure-Object CPU -Sum).Sum, 1); "
+            # Sample CPU over 1 s for accurate % (snapshot delta / elapsed / logical cores)
+            "$cores = (Get-CimInstance Win32_ComputerSystem -EA SilentlyContinue).NumberOfLogicalProcessors; "
+            "$snap1 = (Get-Process -Name 'arma3*' -EA SilentlyContinue | Measure-Object CPU -Sum).Sum; "
+            "Start-Sleep -Milliseconds 1000; "
+            "$all  = Get-Process -Name 'arma3*' -ErrorAction SilentlyContinue; "
+            "$snap2 = ($all | Measure-Object CPU -Sum).Sum; "
+            "$cpuPct = [math]::Round(($snap2 - $snap1) / (1.0 * [math]::Max($cores,1)) * 100, 1); "
+            # RAM total
             "$totalRam = [math]::Round(($all | Measure-Object WorkingSet64 -Sum).Sum / 1MB, 0); "
             "$cnt = $all.Count; "
-            "\"$totalCpu|$totalRam|$up|$cnt\""
+            "\"$cpuPct|$totalRam|$up|$cnt|$cores\""
         )
         _, out = await ssh_helper.run_ps_command(ps)
         for line in out.splitlines():
             line = line.strip()
             if line == "stopped":
                 return None
-            if re.match(r"^[\d.]+\|\d+\|\d+\|\d+$", line):
+            if re.match(r"^[\d.]+\|\d+\|\d+\|\d+\|\d+$", line):
                 parts = line.split("|")
                 try:
                     return {
-                        "cpu":        float(parts[0]),
+                        "cpu_pct":    float(parts[0]),
                         "ram_mb":     int(parts[1]),
                         "uptime_s":   int(parts[2]),
                         "proc_count": int(parts[3]),
+                        "cores":      int(parts[4]),
                         "pid":        pid,
                     }
                 except ValueError:
@@ -296,7 +306,7 @@ class ServerCog(commands.Cog):
         query_port  = port + 1
 
         # Post the initial status embed as a follow-up (separate from the start reply)
-        init_embed = _build_live_embed(profile, {"cpu": 0.0, "ram_mb": 0, "uptime_s": 0, "pid": pid}, None)
+        init_embed = _build_live_embed(profile, {"cpu_pct": 0.0, "ram_mb": 0, "uptime_s": 0, "proc_count": 1, "cores": 1, "pid": pid}, None)
         init_embed.title = f"🟡  Server Starting — `{profile}`"
         init_embed.color = discord.Color.yellow()
 
