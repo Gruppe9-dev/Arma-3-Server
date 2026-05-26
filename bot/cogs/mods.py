@@ -32,7 +32,10 @@ async def _reply(
     output: str,
     fields: dict[str, str] | None = None,
 ) -> None:
-    """Edit the deferred response with an embed; send overflow as plain follow-ups."""
+    """Filter output first, then build embed + send overflow follow-ups."""
+    filtered = ssh_helper.filter_output(output)
+    chunks   = ssh_helper.split_output(filtered) if filtered else ["(no output)"]
+
     color  = discord.Color.green() if code == 0 else discord.Color.red()
     status = "✅ Success" if code == 0 else f"❌ Error (Exit {code})"
     embed  = discord.Embed(title=title, color=color, timestamp=datetime.utcnow())
@@ -42,16 +45,12 @@ async def _reply(
         for name, value in fields.items():
             embed.add_field(name=name, value=value, inline=True)
 
-    if output:
-        filtered = ssh_helper.filter_output(output)
-        truncated = filtered[:990] + "\n…(truncated)" if len(filtered) > 990 else filtered
-        embed.add_field(name="Output", value=f"```\n{truncated}\n```", inline=False)
+    embed.add_field(name="Output", value=f"```\n{chunks[0]}\n```", inline=False)
 
     await interaction.edit_original_response(embed=embed)
 
-    if len(output) > 990:
-        for chunk in ssh_helper.split_output(output[990:]):
-            await interaction.followup.send(f"```\n{chunk}\n```")
+    for chunk in chunks[1:]:
+        await interaction.followup.send(f"```\n{chunk}\n```")
 
 
 # ── Cog ────────────────────────────────────────────────────────────────────────

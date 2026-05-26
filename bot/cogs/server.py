@@ -25,25 +25,6 @@ async def _deny(interaction: discord.Interaction) -> None:
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
 
-def _build_output_embed(title: str, code: int, output: str, profile: str | None = None) -> discord.Embed:
-    """Build an embed for PowerShell script output."""
-    color   = discord.Color.green() if code == 0 else discord.Color.red()
-    status  = "✅ Success" if code == 0 else f"❌ Error (Exit {code})"
-    embed   = discord.Embed(title=title, color=color, timestamp=datetime.utcnow())
-
-    if profile:
-        embed.add_field(name="Profile", value=f"`{profile}`", inline=True)
-
-    embed.add_field(name="Status", value=status, inline=True)
-
-    if output:
-        filtered = ssh_helper.filter_output(output)
-        truncated = filtered[:990] + "\n…(truncated)" if len(filtered) > 990 else filtered
-        embed.add_field(name="Output", value=f"```\n{truncated}\n```", inline=False)
-
-    return embed
-
-
 async def _reply(
     interaction: discord.Interaction,
     title: str,
@@ -51,14 +32,23 @@ async def _reply(
     output: str,
     profile: str | None = None,
 ) -> None:
-    """Edit the deferred response with an embed; send overflow as plain follow-ups."""
-    embed = _build_output_embed(title, code, output, profile)
+    """Filter output first, then build embed + send overflow follow-ups."""
+    filtered = ssh_helper.filter_output(output)
+    chunks   = ssh_helper.split_output(filtered) if filtered else ["(no output)"]
+
+    color  = discord.Color.green() if code == 0 else discord.Color.red()
+    status = "✅ Success" if code == 0 else f"❌ Error (Exit {code})"
+    embed  = discord.Embed(title=title, color=color, timestamp=datetime.utcnow())
+
+    if profile:
+        embed.add_field(name="Profile", value=f"`{profile}`", inline=True)
+    embed.add_field(name="Status", value=status, inline=True)
+    embed.add_field(name="Output", value=f"```\n{chunks[0]}\n```", inline=False)
+
     await interaction.edit_original_response(embed=embed)
 
-    # Send any output that didn't fit in the embed
-    if len(output) > 990:
-        for chunk in ssh_helper.split_output(output[990:]):
-            await interaction.followup.send(f"```\n{chunk}\n```")
+    for chunk in chunks[1:]:
+        await interaction.followup.send(f"```\n{chunk}\n```")
 
 
 # ── Cog ────────────────────────────────────────────────────────────────────────
@@ -124,12 +114,8 @@ class ServerCog(commands.Cog):
             color=discord.Color.blue(),
             timestamp=datetime.utcnow(),
         )
-        if out:
-            filtered = ssh_helper.filter_output(out)
-            embed.add_field(name="Processes", value=f"```\n{filtered[:990]}\n```", inline=False)
-        else:
-            embed.description = "No Arma 3 processes running."
-
+        out = out or "No Arma 3 processes running."
+        embed.add_field(name="Processes", value=f"```\n{out[:990]}\n```", inline=False)
         await interaction.edit_original_response(embed=embed)
 
     # ── /server update ────────────────────────────────────────────────────────
