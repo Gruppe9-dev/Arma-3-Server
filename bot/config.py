@@ -23,8 +23,6 @@ def _parse_ids(env_var: str, default: str = "") -> set[int]:
 # ── Discord ────────────────────────────────────────────────────────────────────
 DISCORD_TOKEN    = os.environ["DISCORD_BOT_TOKEN"]
 GUILD_ID         = int(os.environ["DISCORD_GUILD_ID"])
-LOG_CHANNEL_ID   = int(os.getenv("DISCORD_LOG_CHANNEL_ID", "0"))
-
 # Comma-separated role IDs that are allowed to use bot commands
 # e.g. DISCORD_ADMIN_ROLE_IDS=123456789,987654321
 ADMIN_ROLE_IDS   = _parse_ids("DISCORD_ADMIN_ROLE_IDS")

@@ -37,8 +37,8 @@ def _build_output_embed(title: str, code: int, output: str, profile: str | None 
     embed.add_field(name="Status", value=status, inline=True)
 
     if output:
-        # Embed field values are limited to 1024 chars
-        truncated = output[:990] + "\n…(truncated)" if len(output) > 990 else output
+        filtered = ssh_helper.filter_output(output)
+        truncated = filtered[:990] + "\n…(truncated)" if len(filtered) > 990 else filtered
         embed.add_field(name="Output", value=f"```\n{truncated}\n```", inline=False)
 
     return embed
@@ -124,7 +124,8 @@ class ServerCog(commands.Cog):
             timestamp=datetime.utcnow(),
         )
         if out:
-            embed.add_field(name="Processes", value=f"```\n{out[:990]}\n```", inline=False)
+            filtered = ssh_helper.filter_output(out)
+            embed.add_field(name="Processes", value=f"```\n{filtered[:990]}\n```", inline=False)
         else:
             embed.description = "No Arma 3 processes running."
 

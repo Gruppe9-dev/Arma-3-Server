@@ -111,8 +111,8 @@ Write-OK "Permissions set on authorized_keys."
 # ── 4. NTFS permissions on the scripts directory ───────────────────────────────
 Write-Step "Granting '$BotUser' read+execute on '$ScriptsPath'"
 
-icacls $ScriptsPath /grant "${BotUser}:(OI)(CI)RX" | Out-Null
-Write-OK "NTFS permissions granted."
+icacls $ScriptsPath /grant "${BotUser}:(OI)(CI)M" | Out-Null
+Write-OK "NTFS permissions granted (Modify)."
 
 # ── Summary ────────────────────────────────────────────────────────────────────
 Write-Host ""

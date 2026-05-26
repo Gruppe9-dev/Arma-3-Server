@@ -43,7 +43,8 @@ async def _reply(
             embed.add_field(name=name, value=value, inline=True)
 
     if output:
-        truncated = output[:990] + "\n…(truncated)" if len(output) > 990 else output
+        filtered = ssh_helper.filter_output(output)
+        truncated = filtered[:990] + "\n…(truncated)" if len(filtered) > 990 else filtered
         embed.add_field(name="Output", value=f"```\n{truncated}\n```", inline=False)
 
     await interaction.edit_original_response(embed=embed)

@@ -22,6 +22,9 @@ logging.basicConfig(
         logging.StreamHandler(),
     ],
 )
+
+# Suppress asyncssh connection-level chatter (keep only warnings/errors)
+logging.getLogger("asyncssh").setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
 
 # ── Bot class ──────────────────────────────────────────────────────────────────
@@ -62,15 +65,6 @@ class ArmaBot(commands.Bot):
                 name="the Arma 3 Server",
             )
         )
-        if config.LOG_CHANNEL_ID:
-            channel = self.get_channel(config.LOG_CHANNEL_ID)
-            if channel:
-                embed = discord.Embed(
-                    title="Bot Online",
-                    description=f"Logged in as `{self.user}`",
-                    color=discord.Color.green(),
-                )
-                await channel.send(embed=embed)
 
 
 # ── Entry point ────────────────────────────────────────────────────────────────

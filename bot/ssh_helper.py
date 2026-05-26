@@ -106,5 +106,74 @@ async def upload_bytes(data: bytes, remote_path: str) -> None:
 def split_output(text: str, size: int = config.MAX_CHARS) -> list[str]:
     """Split output into chunks that fit within Discord's message limit."""
     if not text:
-        return ["(keine Ausgabe)"]
+        return ["(no output)"]
     return [text[i : i + size] for i in range(0, len(text), size)]
+
+
+# Lines containing these strings are dropped from Discord output (verbose noise)
+_SKIP_PATTERNS = [
+    "already deployed",
+    "config loaded from",
+    "running steamcmd",
+    "redirecting stderr",
+    "logging directory",
+    "checking for available updates",
+    "verifying installation",
+    "steam console client",
+    "loading steam api",
+    "logging in user",
+    "waiting for client config",
+    "waiting for user info",
+    "unloading steam api",
+    "please use force_install_dir",
+]
+
+# Lines containing these strings are always kept
+_KEEP_PATTERNS = [
+    "warn",
+    "error",
+    "fail",
+    "[ok]",
+    "===",
+    "success",
+    "downloading item",
+    "deployed:",
+    "key copied",
+    "next step",
+    "exit",
+]
+
+
+def filter_output(text: str, max_lines: int = 30) -> str:
+    """
+    Filter verbose PowerShell script output for Discord display.
+
+    Drops repetitive noise (already-deployed notices, SteamCMD boilerplate).
+    Always keeps warnings, errors, summaries, and the last few lines.
+    """
+    if not text:
+        return ""
+
+    lines = text.splitlines()
+
+    def _keep(line: str) -> bool:
+        lower = line.lower()
+        if any(p in lower for p in _KEEP_PATTERNS):
+            return True
+        if any(p in lower for p in _SKIP_PATTERNS):
+            return False
+        return True
+
+    filtered = [line for line in lines if _keep(line)]
+
+    # Always include the last 5 lines (summary / next-step hints)
+    tail = lines[-5:]
+    for line in tail:
+        if line not in filtered:
+            filtered.append(line)
+
+    # Hard cap — take the last max_lines if still too long
+    if len(filtered) > max_lines:
+        filtered = [f"… ({len(filtered) - max_lines} lines hidden) …"] + filtered[-max_lines:]
+
+    return "\n".join(filtered)
