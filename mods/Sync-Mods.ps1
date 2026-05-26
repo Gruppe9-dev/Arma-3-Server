@@ -126,7 +126,9 @@ $failed     = 0
 
 foreach ($mod in $modList) {
     $targetDir = Join-Path $Config.ServerInstallPath $mod.FolderName
-    if ((Test-Path $targetDir) -and -not $Force) {
+    # A folder that exists but is empty counts as not-deployed (e.g. left over from a failed copy)
+    $hasFiles  = (Test-Path $targetDir) -and (@(Get-ChildItem -Path $targetDir -Recurse -File -ErrorAction SilentlyContinue).Count -gt 0)
+    if ($hasFiles -and -not $Force) {
         Write-Log "Already deployed: $($mod.FolderName)  (ID: $($mod.WorkshopId))" "Info"
         $success++
     } else {
