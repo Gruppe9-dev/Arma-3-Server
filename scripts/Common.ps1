@@ -326,6 +326,24 @@ function Invoke-SteamCMD {
         exit 1
     }
 
+    # Ensure SteamCMD can find its data directories when running under a
+    # service account or SSH session that has no initialised user profile.
+    if (-not $env:APPDATA) {
+        $env:APPDATA = if ($env:USERPROFILE) {
+            Join-Path $env:USERPROFILE "AppData\Roaming"
+        } else { "$env:SystemRoot\Temp" }
+    }
+    if (-not $env:LOCALAPPDATA) {
+        $env:LOCALAPPDATA = if ($env:USERPROFILE) {
+            Join-Path $env:USERPROFILE "AppData\Local"
+        } else { "$env:SystemRoot\Temp" }
+    }
+    if (-not $env:TEMP) { $env:TEMP = "$env:SystemRoot\Temp" }
+    if (-not $env:TMP)  { $env:TMP  = $env:TEMP }
+    foreach ($d in @($env:APPDATA, $env:LOCALAPPDATA)) {
+        if (-not (Test-Path $d)) { New-Item -ItemType Directory -Path $d -Force | Out-Null }
+    }
+
     # Write commands to a temporary script file.
     # Using a file avoids all shell-quoting issues with special chars in passwords.
     $scriptFile = [System.IO.Path]::GetTempFileName() -replace '\.tmp$', '.steamcmd'
