@@ -15,13 +15,58 @@ if (!isServer) exitWith {};
 // ---------------------------------------------------------------------------
 private _debug             = true;
 private _rebalanceInterval = 60;   // seconds between rebalances
+private _fpsPollInterval   = 10;   // seconds between HC FPS reports
 
 missionNamespace setVariable ["HC_debug",             _debug];
 missionNamespace setVariable ["HC_rebalanceInterval", _rebalanceInterval];
+missionNamespace setVariable ["HC_fpsPollInterval",   _fpsPollInterval];
 missionNamespace setVariable ["HC_initialized",       false];
 missionNamespace setVariable ["HC_lastRebalance",     -9999];
 missionNamespace setVariable ["HC_ownerIds",          []];
 missionNamespace setVariable ["HC_initDelay",         10];  // wait 10 s after start before first transfer
+
+// ---------------------------------------------------------------------------
+// HC FPS Monitoring
+// ---------------------------------------------------------------------------
+
+// Creates a map marker for a single HC. Called when the HC registers.
+// Markers are placed in a column in the top-right corner of the map.
+HC_fnc_createFPSMarker = {
+    params ["_ownerId", "_idx"];
+    private _markerName = format ["HC_FPS_%1", _ownerId];
+    private _pos = [worldSize - 100, worldSize - 100 - (_idx * 80), 0];
+    private _m = createMarker [_markerName, _pos];
+    _m setMarkerShape "ICON";
+    _m setMarkerType "mil_dot";
+    _m setMarkerColor "ColorGreen";
+    _m setMarkerText format ["HC%1: -- FPS", _idx + 1];
+    _m setMarkerAlpha 0.9;
+};
+
+// Pushes the FPS reporting loop to an HC machine.
+// The HC sends its diag_fps every HC_fpsPollInterval seconds via publicVariableServer.
+// publicVariableServer + addPublicVariableEventHandler avoids CfgRemoteExec restrictions.
+HC_fnc_startFPSReporting = {
+    params ["_ownerId"];
+    private _interval = missionNamespace getVariable ["HC_fpsPollInterval", 5];
+    [
+        {
+            [{ HC_fps_report = [clientOwner, round diag_fps]; publicVariableServer "HC_fps_report"; },
+             missionNamespace getVariable ["HC_fpsPollInterval", 5]] call CBA_fnc_addPerFrameHandler;
+        },
+        _interval
+    ] remoteExec ["call", _ownerId];
+};
+
+// Server-side listener: receives FPS reports from HCs and updates their markers.
+addPublicVariableEventHandler ["HC_fps_report", {
+    (_this select 1) params ["_ownerId", "_fps"];
+    private _hcOwners = missionNamespace getVariable ["HC_ownerIds", []];
+    private _idx = _hcOwners find _ownerId;
+    if (_idx < 0) exitWith {};
+    private _markerName = format ["HC_FPS_%1", _ownerId];
+    _markerName setMarkerText format ["HC%1: %2 FPS", _idx + 1, _fps];
+}];
 
 // ---------------------------------------------------------------------------
 // Capture HC owner IDs via PlayerConnected event.
@@ -51,6 +96,11 @@ addMissionEventHandler ["PlayerConnected", {
         diag_log format ["[HC-Transfer] HC connected: name=%1 ownerId=%2 (total: %3)",
             _name, _ownerId, count _list];
     };
+
+    // Create FPS marker and start reporting loop on this HC
+    private _idx = (count _list) - 1;
+    [_ownerId, _idx] call HC_fnc_createFPSMarker;
+    [_ownerId] call HC_fnc_startFPSReporting;
 }];
 
 // Also register HCs that connected before this script ran (JIP / already present)
@@ -65,6 +115,10 @@ addMissionEventHandler ["PlayerConnected", {
             if (_debug) then {
                 diag_log format ["[HC-Transfer] HC pre-connected: name=%1 ownerId=%2", _name, _ownerId];
             };
+            // Create FPS marker and start reporting loop
+            private _idx = (count _list) - 1;
+            [_ownerId, _idx] call HC_fnc_createFPSMarker;
+            [_ownerId] call HC_fnc_startFPSReporting;
         };
     };
 } forEach allPlayers;
