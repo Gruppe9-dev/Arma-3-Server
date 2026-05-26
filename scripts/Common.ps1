@@ -359,8 +359,11 @@ namespace Arma3 {
     $pi       = New-Object Arma3.ProcessHelper+PROCESS_INFORMATION
     $cmdLine  = "`"$FilePath`"" + $(if ($ArgumentList) { " " + ($ArgumentList -join " ") } else { "" })
 
+    # Pass FilePath as lpApplicationName so Windows doesn't do a PATH search
+    # (paths with '#' or spaces fail when lpApplicationName is null).
+    # lpCommandLine still needs the exe as argv[0] for some programs.
     $ok = [Arma3.ProcessHelper]::CreateProcess(
-        $null, $cmdLine,
+        $FilePath, $cmdLine,
         [IntPtr]::Zero, [IntPtr]::Zero,
         $false, [Arma3.ProcessHelper]::DETACH_FLAGS,
         [IntPtr]::Zero, $WorkingDirectory,
