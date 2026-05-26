@@ -58,6 +58,18 @@ HC_fnc_startFPSReporting = {
     ] remoteExec ["call", _ownerId];
 };
 
+// Server FPS marker – updated directly since this script runs on the server.
+private _serverMarker = createMarker ["HC_FPS_server", [worldSize - 100, worldSize - 50, 0]];
+_serverMarker setMarkerShape "ICON";
+_serverMarker setMarkerType "mil_dot";
+_serverMarker setMarkerColor "ColorBlue";
+_serverMarker setMarkerText "Server: -- FPS";
+_serverMarker setMarkerAlpha 0.9;
+
+[{
+    "HC_FPS_server" setMarkerText format ["Server: %1 FPS", round diag_fps];
+}, missionNamespace getVariable ["HC_fpsPollInterval", 10]] call CBA_fnc_addPerFrameHandler;
+
 // Server-side listener: receives FPS reports from HCs and updates their markers.
 addPublicVariableEventHandler ["HC_fps_report", {
     (_this select 1) params ["_ownerId", "_fps"];
