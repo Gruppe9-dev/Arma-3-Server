@@ -98,11 +98,11 @@ Write-Step "Setting NTFS permissions"
 
 # mpmissions: read + write (upload / download missions)
 icacls $MissionPath /grant "${SftpUser}:(OI)(CI)M" | Out-Null
-Write-OK "mpmissions\ → $SftpUser: Modify"
+Write-OK "mpmissions\ -> ${SftpUser}: Modify"
 
 # profiles: read-only (view profile configs, no editing)
 icacls $ProfilesPath /grant "${SftpUser}:(OI)(CI)RX" | Out-Null
-Write-OK "profiles\   → $SftpUser: Read+Execute"
+Write-OK "profiles\   -> ${SftpUser}: Read+Execute"
 
 # ── 4. Update sshd_config ──────────────────────────────────────────────────────
 Write-Step "Updating sshd_config"
