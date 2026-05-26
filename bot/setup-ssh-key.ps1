@@ -40,11 +40,18 @@ Write-Step "Creating local user '$BotUser'"
 if (Get-LocalUser -Name $BotUser -ErrorAction SilentlyContinue) {
     Write-Warn "User '$BotUser' already exists. Skipping creation."
 } else {
-    # No password – SSH key-only authentication
-    $secure = New-Object System.Security.SecureString
+    # Generate a random complex password — the user will only authenticate via SSH key,
+    # so this password is never used but must satisfy domain complexity requirements.
+    $randomPw = [System.Web.Security.Membership]::GeneratePassword(32, 8)
+    if (-not $randomPw) {
+        # Fallback if System.Web is unavailable
+        $chars   = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%^&*()'
+        $randomPw = -join ((1..32) | ForEach-Object { $chars[(Get-Random -Maximum $chars.Length)] })
+    }
+    $secure = ConvertTo-SecureString $randomPw -AsPlainText -Force
     New-LocalUser -Name $BotUser -Password $secure -PasswordNeverExpires -UserMayNotChangePassword `
         -Description "Arma 3 Discord Bot (key-only)" | Out-Null
-    Write-OK "User '$BotUser' created."
+    Write-OK "User '$BotUser' created (password-login disabled via key-only SSH)."
 }
 
 # ── 2. Generate SSH key pair ───────────────────────────────────────────────────
