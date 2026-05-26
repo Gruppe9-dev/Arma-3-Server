@@ -219,13 +219,107 @@ if ($Merge) {
 $newMods = $newWorkshopIds | Select-Object -ExpandProperty FolderName
 
 # ---------------------------------------------------------------------------
+# Format profile.json in a clean, human-readable style:
+#   - scalar properties inline
+#   - string arrays (Mods/ServerMods/ExtraArgs) one entry per line
+#   - WorkshopIds as inline objects with column-aligned padding
+# ---------------------------------------------------------------------------
+function Format-ProfileJson {
+    param(
+        [PSCustomObject]$Data,
+        [object[]]$WorkshopIds,
+        [string[]]$Mods,
+        [string[]]$ServerMods,
+        [string[]]$ExtraArgs
+    )
+
+    $sb = [System.Text.StringBuilder]::new()
+    $nl = "`n"
+
+    $null = $sb.Append("{$nl")
+
+    # Scalar properties in a fixed, readable order
+    $scalarOrder = @('_comment','ProfileName','Port','Branch','MaxPlayers','FPSLimit','EnableAutoInit','HeadlessClientCount')
+    foreach ($key in $scalarOrder) {
+        if ($Data.PSObject.Properties.Name -notcontains $key) { continue }
+        $val = $Data.$key
+        if ($val -is [bool]) {
+            $v = if ($val) { 'true' } else { 'false' }
+            $null = $sb.Append("  `"$key`": $v,$nl")
+        } elseif ($val -is [int] -or $val -is [long] -or $val -is [double]) {
+            $null = $sb.Append("  `"$key`": $val,$nl")
+        } else {
+            $escaped = "$val" -replace '\\', '\\' -replace '"', '\"'
+            $null = $sb.Append("  `"$key`": `"$escaped`",$nl")
+        }
+    }
+
+    # Helper: write a string array property
+    $writeStringArray = {
+        param([string]$Name, [string[]]$Items, [bool]$TrailingComma = $true)
+        $comma = if ($TrailingComma) { ',' } else { '' }
+        if ($Items.Count -eq 0) {
+            $null = $sb.Append("  `"$Name`": []$comma$nl")
+        } else {
+            $null = $sb.Append("  `"$Name`": [$nl")
+            for ($i = 0; $i -lt $Items.Count; $i++) {
+                $c = if ($i -lt $Items.Count - 1) { ',' } else { '' }
+                $null = $sb.Append("    `"$($Items[$i])`"$c$nl")
+            }
+            $null = $sb.Append("  ]$comma$nl")
+        }
+    }
+
+    & $writeStringArray "Mods"       $Mods       $true
+    & $writeStringArray "ServerMods" $ServerMods $true
+    & $writeStringArray "ExtraArgs"  $ExtraArgs  $true
+
+    # WorkshopIds – inline objects, Id and FolderName column-padded for readability
+    if ($WorkshopIds.Count -eq 0) {
+        $null = $sb.Append("  `"WorkshopIds`": []$nl")
+    } else {
+        $maxId  = ($WorkshopIds | ForEach-Object { "$($_.Id)".Length }         | Measure-Object -Maximum).Maximum
+        $maxFld = ($WorkshopIds | ForEach-Object { "$($_.FolderName)".Length } | Measure-Object -Maximum).Maximum
+
+        $null = $sb.Append("  `"WorkshopIds`": [$nl")
+        for ($i = 0; $i -lt $WorkshopIds.Count; $i++) {
+            $m    = $WorkshopIds[$i]
+            $c    = if ($i -lt $WorkshopIds.Count - 1) { ',' } else { '' }
+            $idP  = "$($m.Id)".PadRight($maxId)
+            $fldP = "$($m.FolderName)".PadRight($maxFld)
+            $nameEsc = "$($m._name)" -replace '\\', '\\' -replace '"', '\"'
+            $null = $sb.Append("    { `"Id`": `"$idP`",  `"FolderName`": `"$fldP`",  `"_name`": `"$nameEsc`" }$c$nl")
+        }
+        $null = $sb.Append("  ]$nl")
+    }
+
+    $null = $sb.Append("}")
+    return $sb.ToString()
+}
+
+# ---------------------------------------------------------------------------
 # Write updated profile.json
 # ---------------------------------------------------------------------------
 $profileData | Add-Member -NotePropertyName "WorkshopIds" -NotePropertyValue $newWorkshopIds -Force
 $profileData | Add-Member -NotePropertyName "Mods"        -NotePropertyValue $newMods        -Force
 
-$json = $profileData | ConvertTo-Json -Depth 10
-Set-Content -Path $profileFile -Value $json -Encoding UTF8
+$existingServerMods = @()
+if ($profileData.PSObject.Properties.Name -contains "ServerMods") {
+    $existingServerMods = @($profileData.ServerMods | Where-Object { $_ })
+}
+$existingExtraArgs = @()
+if ($profileData.PSObject.Properties.Name -contains "ExtraArgs") {
+    $existingExtraArgs = @($profileData.ExtraArgs | Where-Object { $_ })
+}
+
+$json = Format-ProfileJson `
+    -Data        $profileData `
+    -WorkshopIds $newWorkshopIds `
+    -Mods        ([string[]]$newMods) `
+    -ServerMods  ([string[]]$existingServerMods) `
+    -ExtraArgs   ([string[]]$existingExtraArgs)
+
+Set-Content -Path $profileFile -Value $json -Encoding UTF8 -NoNewline
 
 Write-Log "profile.json updated: $profileFile" "Success"
 Write-Log "  WorkshopIds : $($newWorkshopIds.Count) mods" "Info"

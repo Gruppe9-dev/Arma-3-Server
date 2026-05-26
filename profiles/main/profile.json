@@ -1,45 +1,76 @@
-{
+﻿{
   "_comment": "Main cooperative server - Profiling Branch, 2 Headless Clients, standard coop mod set.",
-
   "ProfileName": "main",
-
   "Port": 2302,
-
   "Branch": "profiling",
-
   "MaxPlayers": 80,
-
   "FPSLimit": 1000,
-
   "EnableAutoInit": false,
-
   "HeadlessClientCount": 2,
-
   "Mods": [
-    "@CBA_A3",
+    "@3den_enhanced",
+    "@aaf_in_alpat",
     "@ace",
-    "@task_force_radio_beta"
+    "@aceview",
+    "@aew_alpat_mcrp_arsenal_expansion",
+    "@aew_operator_helmet_expansion",
+    "@ak_230",
+    "@animate_radio",
+    "@cba_a3",
+    "@ctab_devastator_edition",
+    "@dega_lpd_liberty_modification",
+    "@gruppe_adler_admin_messages",
+    "@gruppe_adler_trenches",
+    "@jca_infantry_arsenal",
+    "@jca_modular_carrier_remake_project",
+    "@kastellorizo",
+    "@lambs_suppression",
+    "@lot_m1014",
+    "@new_csat_overhaul_dvk",
+    "@quiggss_firearms_pack",
+    "@rhsafrf",
+    "@scar_weapon_family_jca_expansion",
+    "@simplex_support_services_dev_build",
+    "@simplex_tools_and_extensions",
+    "@speshal_core",
+    "@suppress",
+    "@task_force_arrowhead_radio_beta",
+    "@the_csat_modification_project",
+    "@vet_unflipping",
+    "@zeus_enhanced"
   ],
-
   "ServerMods": [],
-
   "ExtraArgs": [],
-
   "WorkshopIds": [
-    {
-      "Id": "450814997",
-      "FolderName": "@CBA_A3",
-      "_name": "CBA: Community Base Addons A3"
-    },
-    {
-      "Id": "463939057",
-      "FolderName": "@ace",
-      "_name": "ACE3"
-    },
-    {
-      "Id": "894678801",
-      "FolderName": "@task_force_radio_beta",
-      "_name": "Task Force Arrowhead Radio BETA"
-    }
+    { "Id": "623475643 ",  "FolderName": "@3den_enhanced                     ",  "_name": "3den Enhanced" },
+    { "Id": "2252825701",  "FolderName": "@aaf_in_alpat                      ",  "_name": "AAF in ALPAT" },
+    { "Id": "463939057 ",  "FolderName": "@ace                               ",  "_name": "ace" },
+    { "Id": "3372876344",  "FolderName": "@aceview                           ",  "_name": "ACEView" },
+    { "Id": "2995431574",  "FolderName": "@aew_alpat_mcrp_arsenal_expansion  ",  "_name": "AEW | ALPAT MCRP Arsenal Expansion" },
+    { "Id": "3087700723",  "FolderName": "@aew_operator_helmet_expansion     ",  "_name": "AEW | Operator Helmet Expansion" },
+    { "Id": "3339267674",  "FolderName": "@ak_230                            ",  "_name": "AK-230" },
+    { "Id": "3283635033",  "FolderName": "@animate_radio                     ",  "_name": "Animate - Radio" },
+    { "Id": "450814997 ",  "FolderName": "@cba_a3                            ",  "_name": "CBA_A3" },
+    { "Id": "2189592034",  "FolderName": "@ctab_devastator_edition           ",  "_name": "Ctab Devastator Edition" },
+    { "Id": "2993609035",  "FolderName": "@dega_lpd_liberty_modification     ",  "_name": "DEGA: LPD Liberty Modification" },
+    { "Id": "2584716811",  "FolderName": "@gruppe_adler_admin_messages       ",  "_name": "Gruppe Adler Admin Messages" },
+    { "Id": "1224892496",  "FolderName": "@gruppe_adler_trenches             ",  "_name": "Gruppe Adler Trenches" },
+    { "Id": "3333302397",  "FolderName": "@jca_infantry_arsenal              ",  "_name": "JCA - Infantry Arsenal" },
+    { "Id": "2989752481",  "FolderName": "@jca_modular_carrier_remake_project",  "_name": "JCA - Modular Carrier Remake Project" },
+    { "Id": "958987050 ",  "FolderName": "@kastellorizo                      ",  "_name": "Kastellorizo" },
+    { "Id": "1808238502",  "FolderName": "@lambs_suppression                 ",  "_name": "LAMBS_Suppression" },
+    { "Id": "3609592136",  "FolderName": "@lot_m1014                         ",  "_name": "LOT - M1014" },
+    { "Id": "1956984634",  "FolderName": "@new_csat_overhaul_dvk             ",  "_name": "New CSAT (Overhaul) DVK" },
+    { "Id": "3557431447",  "FolderName": "@quiggss_firearms_pack             ",  "_name": "Quiggs's Firearms Pack" },
+    { "Id": "843425103 ",  "FolderName": "@rhsafrf                           ",  "_name": "RHSAFRF" },
+    { "Id": "3345739516",  "FolderName": "@scar_weapon_family_jca_expansion  ",  "_name": "SCAR Weapon Family (JCA Expansion)" },
+    { "Id": "3029520419",  "FolderName": "@simplex_support_services_dev_build",  "_name": "Simplex Support Services [DEV BUILD]" },
+    { "Id": "2981582086",  "FolderName": "@simplex_tools_and_extensions      ",  "_name": "Simplex Tools and Extensions" },
+    { "Id": "3283642267",  "FolderName": "@speshal_core                      ",  "_name": "Speshal Core" },
+    { "Id": "825174634 ",  "FolderName": "@suppress                          ",  "_name": "Suppress" },
+    { "Id": "894678801 ",  "FolderName": "@task_force_arrowhead_radio_beta   ",  "_name": "Task Force Arrowhead Radio (BETA!!!)" },
+    { "Id": "441854566 ",  "FolderName": "@the_csat_modification_project     ",  "_name": "The CSAT Modification Project" },
+    { "Id": "1703187116",  "FolderName": "@vet_unflipping                    ",  "_name": "VET_Unflipping" },
+    { "Id": "1779063631",  "FolderName": "@zeus_enhanced                     ",  "_name": "Zeus Enhanced" }
   ]
 }
