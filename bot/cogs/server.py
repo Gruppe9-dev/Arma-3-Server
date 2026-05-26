@@ -175,11 +175,11 @@ class ServerCog(commands.Cog):
         """SSH: read server.pid and Port from profile.json. Returns (pid, port)."""
         base = config.SCRIPTS_PATH.replace("\\", "/")
         ps = (
-            f"$pid = (Get-Content '{base}/profiles/{profile}/server.pid' "
+            f"$serverPid = (Get-Content '{base}/profiles/{profile}/server.pid' "
             f"  -ErrorAction SilentlyContinue | Select-Object -First 1).Trim(); "
-            f"$port = (Get-Content '{base}/profiles/{profile}/profile.json' "
+            f"$serverPort = (Get-Content '{base}/profiles/{profile}/profile.json' "
             f"  | ConvertFrom-Json).Port; "
-            "\"$pid|$port\""
+            '"$serverPid|$serverPort"'
         )
         _, out = await ssh_helper.run_ps_command(ps)
         out = out.strip()
