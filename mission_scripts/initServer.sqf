@@ -94,9 +94,10 @@ missionNamespace setVariable ["HC_fnc_transfer", {
     // Local group counts per HC – updated immediately after each setGroupOwner
     // so the load balancer sees correct values within the same frame.
     // (groupOwner reflects changes asynchronously; querying allGroups mid-loop gives stale data.)
+    // Only count non-empty groups so dead/empty groups do not skew the balance.
     private _localCounts = _hcOwners apply {
         private _id = _x;
-        { groupOwner _x == _id } count allGroups
+        { groupOwner _x == _id && count units _x > 0 } count allGroups
     };
 
     {
@@ -142,9 +143,11 @@ missionNamespace setVariable ["HC_fnc_transfer", {
 
     if (_debug) then {
         private _distStr = "";
-        for "_i" from 0 to (count _hcOwners - 1) do {
-            _distStr = _distStr + format ["HC%1:%2g ", _hcOwners select _i, _localCounts select _i];
-        };
+        {
+            private _id  = _x;
+            private _cnt = { groupOwner _x == _id && count units _x > 0 } count allGroups;
+            _distStr = _distStr + format ["HC%1:%2g ", _id, _cnt];
+        } forEach _hcOwners;
         diag_log format ["[HC-Transfer] Done. Moved: %1 | Dist: %2", _transferred, _distStr];
     };
 }];
