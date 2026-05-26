@@ -110,6 +110,7 @@ class ServerCog(commands.Cog):
         logger.info("server status requested by %s", interaction.user)
 
         ps = (
+            "$ProgressPreference = 'SilentlyContinue'; "
             "Get-Process arma3* -ErrorAction SilentlyContinue "
             "| Select-Object Id,ProcessName,"
             "@{N='CPU(s)';E={[math]::Round($_.CPU,1)}},"

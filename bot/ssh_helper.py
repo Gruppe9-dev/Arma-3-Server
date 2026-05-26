@@ -110,8 +110,27 @@ def split_output(text: str, size: int = config.MAX_CHARS) -> list[str]:
     return [text[i : i + size] for i in range(0, len(text), size)]
 
 
-# Lines containing these strings are dropped from Discord output (verbose noise)
+    # Lines containing these strings are dropped from Discord output (verbose noise)
 _SKIP_PATTERNS = [
+    # PowerShell CLIXML progress-stream serialisation (appears when stdout is captured via SSH)
+    "#< clixml",
+    "<objs ",
+    "<obj ",
+    "<tn ",
+    "<tnref ",
+    "<ms>",
+    "<i64 ",
+    "<pr>",
+    "<pr ",
+    "<av>",
+    "<ai>",
+    "<nil ",
+    "<pi>",
+    "<pc>",
+    "<t>",
+    "<sr>",
+    "<sd>",
+    "</",
     # General framework noise
     "already deployed",
     "config loaded from",
@@ -139,6 +158,14 @@ _SKIP_PATTERNS = [
     "fps limit :",
     "-mod=",              # stray mod-list continuation lines
     "connect=127",        # HC connect line
+    "pid saved to",
+    "hc pids saved",
+    "branch     :",
+    "maxplayers :",
+    "binary     :",
+    "mods       :",
+    "port       :",       # startup info block (not the final summary)
+    "enableht",           # command-line continuation
 ]
 
 # Lines containing these strings are always kept
