@@ -104,12 +104,16 @@ def _build_live_embed(
         embed.add_field(name="👥  Players", value="—", inline=True)
         embed.add_field(name="🗺️  Mission", value="Starting…", inline=True)
 
-    embed.add_field(name="⏱️  Uptime",   value=_fmt_uptime(proc["uptime_s"]), inline=True)
-    embed.add_field(name="💻  CPU",      value=f"{proc['cpu']:.1f}s total",   inline=True)
-    embed.add_field(name="💾  RAM",      value=f"{proc['ram_mb']:,} MB",       inline=True)
-    embed.add_field(name="🔢  PID",      value=str(proc["pid"]),               inline=True)
+    proc_count = proc.get("proc_count", 1)
+    proc_label = f"{proc_count} process(es)"   # server + HCs
 
-    embed.set_footer(text=f"Profile: {profile}  •  auto-refresh every {_LIVE_UPDATE_INTERVAL}s")
+    embed.add_field(name="⏱️  Uptime",    value=_fmt_uptime(proc["uptime_s"]),       inline=True)
+    embed.add_field(name="💻  CPU",       value=f"{proc['cpu']:.1f}s total",          inline=True)
+    embed.add_field(name="💾  RAM",       value=f"{proc['ram_mb']:,} MB",             inline=True)
+    embed.add_field(name="🔢  PID",       value=str(proc["pid"]),                     inline=True)
+    embed.add_field(name="⚙️  Processes", value=proc_label,                           inline=True)
+
+    embed.set_footer(text=f"Profile: {profile}  •  CPU & RAM = server + all HCs  •  refresh every {_LIVE_UPDATE_INTERVAL}s")
     return embed
 
 
@@ -128,39 +132,42 @@ class ServerCog(commands.Cog):
     # ── internal: query process stats via SSH ──────────────────────────────────
 
     async def _get_proc_stats(self, pid: int) -> dict | None:
-        """Return CPU/RAM/uptime dict for the given PID, or None if gone."""
+        """Return aggregated CPU/RAM/uptime for the server stack, or None if main PID gone.
+
+        Uptime is derived from the main server PID (online/offline signal).
+        CPU and RAM are summed across ALL arma3* processes (server + HCs).
+        """
         ps = (
             "$ProgressPreference = 'SilentlyContinue'; "
-            f"$p = Get-Process -Id {pid} -ErrorAction SilentlyContinue; "
-            "if ($p) { "
-            "  $up = [math]::Floor(((Get-Date) - $p.StartTime).TotalSeconds); "
-            "  \"$([math]::Round($p.CPU,2))|$([math]::Round($p.WorkingSet64/1MB,0))|$up\" "
-            "} else { 'stopped' }"
+            # Check main server PID for uptime / online detection
+            f"$main = Get-Process -Id {pid} -ErrorAction SilentlyContinue; "
+            "if (-not $main) { 'stopped'; exit } "
+            "$up = [math]::Floor(((Get-Date) - $main.StartTime).TotalSeconds); "
+            # Aggregate all arma3 processes for total CPU + RAM
+            "$all = Get-Process -Name 'arma3*' -ErrorAction SilentlyContinue; "
+            "$totalCpu = [math]::Round(($all | Measure-Object CPU -Sum).Sum, 1); "
+            "$totalRam = [math]::Round(($all | Measure-Object WorkingSet64 -Sum).Sum / 1MB, 0); "
+            "$cnt = $all.Count; "
+            "\"$totalCpu|$totalRam|$up|$cnt\""
         )
         _, out = await ssh_helper.run_ps_command(ps)
-        # Pick first line that matches the expected format (skip CLIXML noise)
-        raw = None
         for line in out.splitlines():
             line = line.strip()
             if line == "stopped":
                 return None
-            if re.match(r"^[\d.]+\|\d+\|\d+$", line):
-                raw = line
-                break
-        if not raw:
-            return None
-        parts = raw.split("|")
-        if len(parts) != 3:
-            return None
-        try:
-            return {
-                "cpu":      float(parts[0]),
-                "ram_mb":   int(parts[1]),
-                "uptime_s": int(parts[2]),
-                "pid":      pid,
-            }
-        except ValueError:
-            return None
+            if re.match(r"^[\d.]+\|\d+\|\d+\|\d+$", line):
+                parts = line.split("|")
+                try:
+                    return {
+                        "cpu":        float(parts[0]),
+                        "ram_mb":     int(parts[1]),
+                        "uptime_s":   int(parts[2]),
+                        "proc_count": int(parts[3]),
+                        "pid":        pid,
+                    }
+                except ValueError:
+                    return None
+        return None
 
     # ── internal: A2S query (run in thread — library is synchronous) ──────────
 
