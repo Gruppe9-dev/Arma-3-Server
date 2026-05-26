@@ -98,6 +98,11 @@ $hcArgs.Add("-name=$hcName")
 $hcArgs.Add("-nosound")
 $hcArgs.Add("-world=empty")
 
+if ($Prof.PSObject.Properties.Name -contains "FPSLimit" -and $Prof.FPSLimit -gt 0) {
+    $hcArgs.Add("-limitFPS=$($Prof.FPSLimit)")
+    Write-Log "FPS Limit : $($Prof.FPSLimit)" "Info"
+}
+
 if ($joinPassword) {
     $hcArgs.Add("-password=`"$joinPassword`"")
 }
