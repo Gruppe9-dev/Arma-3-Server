@@ -43,7 +43,7 @@ if (Get-LocalUser -Name $BotUser -ErrorAction SilentlyContinue) {
     # No password – SSH key-only authentication
     $secure = New-Object System.Security.SecureString
     New-LocalUser -Name $BotUser -Password $secure -PasswordNeverExpires -UserMayNotChangePassword `
-        -Description "Arma 3 Discord Bot (SSH key-only, no interactive login)" | Out-Null
+        -Description "Arma 3 Discord Bot (key-only)" | Out-Null
     Write-OK "User '$BotUser' created."
 }
 
