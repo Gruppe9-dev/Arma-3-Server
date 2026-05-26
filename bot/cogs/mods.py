@@ -34,7 +34,10 @@ async def _reply(
 ) -> None:
     """Filter output first, then build embed + send overflow follow-ups."""
     filtered = ssh_helper.filter_output(output)
-    chunks   = ssh_helper.split_output(filtered) if filtered else ["(no output)"]
+    # Embed fields max 1024 chars; subtract 10 for ```\n…\n``` wrappers
+    embed_chunks   = ssh_helper.split_output(filtered, size=1010) if filtered else ["(no output)"]
+    # Remaining overflow goes as plain follow-up messages (2000 char limit)
+    overflow_chunks = ssh_helper.split_output(filtered, size=1900) if filtered else []
 
     color  = discord.Color.green() if code == 0 else discord.Color.red()
     status = "✅ Success" if code == 0 else f"❌ Error (Exit {code})"
@@ -45,11 +48,12 @@ async def _reply(
         for name, value in fields.items():
             embed.add_field(name=name, value=value, inline=True)
 
-    embed.add_field(name="Output", value=f"```\n{chunks[0]}\n```", inline=False)
+    embed.add_field(name="Output", value=f"```\n{embed_chunks[0]}\n```", inline=False)
 
     await interaction.edit_original_response(embed=embed)
 
-    for chunk in chunks[1:]:
+    # Send any chunks beyond the first as plain follow-up messages
+    for chunk in overflow_chunks[1:]:
         await interaction.followup.send(f"```\n{chunk}\n```")
 
 
