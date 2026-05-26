@@ -42,12 +42,21 @@ if (Get-LocalUser -Name $BotUser -ErrorAction SilentlyContinue) {
 } else {
     # Generate a random complex password — the user will only authenticate via SSH key,
     # so this password is never used but must satisfy domain complexity requirements.
-    $randomPw = [System.Web.Security.Membership]::GeneratePassword(32, 8)
-    if (-not $randomPw) {
-        # Fallback if System.Web is unavailable
-        $chars   = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%^&*()'
-        $randomPw = -join ((1..32) | ForEach-Object { $chars[(Get-Random -Maximum $chars.Length)] })
-    }
+    $lower   = 'abcdefghijklmnopqrstuvwxyz'
+    $upper   = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
+    $digits  = '0123456789'
+    $special = '!@#$%^&*()-_=+'
+    $all     = $lower + $upper + $digits + $special
+    # Guarantee at least one char from each category, then pad to 32 chars total
+    $randomPw = (
+        @(
+            $lower[ (Get-Random -Maximum $lower.Length) ],
+            $upper[ (Get-Random -Maximum $upper.Length) ],
+            $digits[(Get-Random -Maximum $digits.Length)],
+            $special[(Get-Random -Maximum $special.Length)]
+        ) + (1..28 | ForEach-Object { $all[(Get-Random -Maximum $all.Length)] }) |
+        Sort-Object { Get-Random }
+    ) -join ''
     $secure = ConvertTo-SecureString $randomPw -AsPlainText -Force
     New-LocalUser -Name $BotUser -Password $secure -PasswordNeverExpires -UserMayNotChangePassword `
         -Description "Arma 3 Discord Bot (key-only)" | Out-Null
