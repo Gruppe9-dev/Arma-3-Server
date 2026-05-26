@@ -143,11 +143,9 @@ missionNamespace setVariable ["HC_fnc_transfer", {
 
     if (_debug) then {
         private _distStr = "";
-        {
-            private _id  = _x;
-            private _cnt = { groupOwner _x == _id && count units _x > 0 } count allGroups;
-            _distStr = _distStr + format ["HC%1:%2g ", _id, _cnt];
-        } forEach _hcOwners;
+        for "_i" from 0 to (count _hcOwners - 1) do {
+            _distStr = _distStr + format ["HC%1:%2g ", _hcOwners select _i, _localCounts select _i];
+        };
         diag_log format ["[HC-Transfer] Done. Moved: %1 | Dist: %2", _transferred, _distStr];
     };
 }];
