@@ -8,10 +8,13 @@ profiles/**/*.log
 profiles/**/*.txt
 profiles/**/*.rpt
 profiles/**/logs/
-profiles/**/BattlEye/
-profiles/**/Users/
 profiles/**/AnimDataCache/
+profiles/**/BattlEye/
 profiles/**/DataCache/
+profiles/**/OfficialServersCache/
+profiles/**/squads/
+profiles/**/Tmp*/
+profiles/**/Users/
 profiles/**/arma3server*
 profiles/**/mpMessage*
 
