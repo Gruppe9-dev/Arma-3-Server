@@ -7,6 +7,7 @@ profiles/**/*.pids
 profiles/**/*.log
 profiles/**/*.txt
 profiles/**/*.rpt
+profiles/**/logs/
 profiles/**/BattlEye/
 profiles/**/Users/
 profiles/**/AnimDataCache/

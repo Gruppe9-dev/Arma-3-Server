@@ -228,10 +228,88 @@ function Get-Profile {
 
     # Inject computed paths
     $profile | Add-Member -NotePropertyName "ProfileDir"  -NotePropertyValue $profileDir  -Force
+    $profile | Add-Member -NotePropertyName "LogDir"      -NotePropertyValue (Join-Path $profileDir "logs") -Force
     $profile | Add-Member -NotePropertyName "ServerCfg"   -NotePropertyValue (Join-Path $profileDir "server.cfg") -Force
     $profile | Add-Member -NotePropertyName "BasicCfg"    -NotePropertyValue (Join-Path $profileDir "basic.cfg")  -Force
 
     return $profile
+}
+
+# ---------------------------------------------------------------------------
+# Log rotation
+# ---------------------------------------------------------------------------
+
+function Invoke-LogRotation {
+    <#
+    .SYNOPSIS
+        Moves existing Arma 3 RPT/log files from the profile directory into a
+        timestamped session folder under <ProfileDir>\logs\ before a new start.
+    .DESCRIPTION
+        Arma 3 always writes its .rpt files directly into the -profiles= directory.
+        This function archives them into sub-folders so the profile root stays clean:
+
+            profiles\main\logs\2026-06-15_10-05-22\arma3server_....rpt
+            profiles\main\logs\2026-06-15_10-05-22\hc_1_....rpt
+
+        If -KeepSessions is specified the oldest session folders are pruned
+        so at most that many sessions are retained.
+    .PARAMETER ProfileDir
+        Path to the profile directory (e.g. profiles\main).
+    .PARAMETER LogDir
+        Destination root for log archives.  Defaults to <ProfileDir>\logs.
+    .PARAMETER KeepSessions
+        Maximum number of session folders to keep.  0 = keep all (default).
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]
+        [string]$ProfileDir,
+
+        [string]$LogDir = "",
+
+        [int]$KeepSessions = 0
+    )
+
+    if (-not $LogDir) { $LogDir = Join-Path $ProfileDir "logs" }
+    if (-not (Test-Path $LogDir)) {
+        New-Item -ItemType Directory -Path $LogDir -Force | Out-Null
+    }
+
+    # Collect all Arma 3 log / report files sitting directly in the profile root.
+    # Covered types:
+    #   .rpt  – main server / HC report logs  (arma3server*.rpt)
+    #   .log  – server_console_*.log, mpStatistics_*.log, rating.log, etc.
+    #   .txt  – mpMessageDetailsServer-*.txt  (message detail dumps)
+    $files = Get-ChildItem -Path $ProfileDir -File |
+             Where-Object { $_.Extension -in @(".rpt", ".log", ".txt") }
+
+    if ($files.Count -eq 0) {
+        Write-Log "Log rotation: no previous log files found." "Info"
+        return
+    }
+
+    # Use the modification time of the newest file as the session label
+    $sessionTs  = ($files | Sort-Object LastWriteTime -Descending | Select-Object -First 1).LastWriteTime
+    $sessionDir = Join-Path $LogDir ($sessionTs.ToString("yyyy-MM-dd_HH-mm-ss"))
+    if (-not (Test-Path $sessionDir)) {
+        New-Item -ItemType Directory -Path $sessionDir -Force | Out-Null
+    }
+
+    foreach ($f in $files) {
+        Move-Item -Path $f.FullName -Destination (Join-Path $sessionDir $f.Name) -Force
+    }
+    Write-Log "Log rotation: moved $($files.Count) file(s) → logs\$($sessionTs.ToString('yyyy-MM-dd_HH-mm-ss'))\" "Success"
+
+    # Prune oldest session folders if requested
+    if ($KeepSessions -gt 0) {
+        $sessions = Get-ChildItem -Path $LogDir -Directory |
+                    Sort-Object Name -Descending |
+                    Select-Object -Skip $KeepSessions
+        foreach ($old in $sessions) {
+            Remove-Item -Path $old.FullName -Recurse -Force
+            Write-Log "Log rotation: removed old session $($old.Name)" "Info"
+        }
+    }
 }
 
 # ---------------------------------------------------------------------------

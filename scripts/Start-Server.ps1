@@ -60,6 +60,11 @@ Write-Log "Port       : $($Prof.Port)" "Info"
 Write-Log "MaxPlayers : $($Prof.MaxPlayers)" "Info"
 
 # ---------------------------------------------------------------------------
+# Archive previous session logs before a clean start
+# ---------------------------------------------------------------------------
+Invoke-LogRotation -ProfileDir $Prof.ProfileDir -LogDir $Prof.LogDir
+
+# ---------------------------------------------------------------------------
 # Resolve binary
 # ---------------------------------------------------------------------------
 $binary = Get-Arma3ServerBinary -ServerInstallPath $Config.ServerInstallPath `
