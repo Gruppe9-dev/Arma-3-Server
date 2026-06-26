@@ -21,6 +21,7 @@
 
   "Mods": [
     "@CBA_A3",
+    "@grp9_mod",
     "@grp9_stats"
   ],
   "_modsNote": "Folder names of mods inside ServerInstallPath. These are passed as -mod= and must be present on all clients.",

@@ -63,7 +63,7 @@ $ScriptRoot    = Split-Path -Parent $MyInvocation.MyCommand.Path
 $FrameworkRoot = Split-Path -Parent $ScriptRoot
 . (Join-Path $FrameworkRoot "scripts\Common.ps1")
 
-$RequiredLocalMods = @("@grp9_stats")
+$RequiredLocalMods = @("@grp9_mod", "@grp9_stats")
 $RequiredServerMods = @("@grp9_stats_server")
 
 function Add-UniqueString {
