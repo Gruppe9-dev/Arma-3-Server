@@ -58,3 +58,12 @@ force ace_ballistics_enabled            = true;  // advanced ballistics (windage
 force ace_missileguidance_enabled       = true;
 force ace_laser_enabled                 = true;
 force ace_nightvision_adjustment        = true;
+
+// ---------------------------------------------------------------------------
+// ACE Headless
+// ---------------------------------------------------------------------------
+force acex_headless_enabled             = true;  // ACE handles AI transfer and HC load balancing
+force acex_headless_delay               = 10;    // seconds before ACE starts moving AI groups
+force acex_headless_endMission          = false; // keep mission running if an HC disconnects
+force acex_headless_log                 = true;  // write ACE HC transfer details to the RPT log
+force acex_headless_transferLoadout     = false; // do not transfer player/loadout data unnecessarily
