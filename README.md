@@ -123,15 +123,11 @@ Arma 3 Server\                    ← This repository
 │   ├── Sync-Mods.ps1              ← Workshop mod download + deploy
 │   └── Import-Preset.ps1          ← Import Arma 3 Launcher HTML preset into a profile
 ├── presets\                       ← Store exported Arma 3 Launcher .html preset files here
-│   └── WoDI_Star_Wars_2026_Walzmine.html
 ├── profiles\
 │   ├── _template\                 ← Copy this to create a new profile
 │   │   ├── profile.json           ← Port, branch, mods, HC count, ...
 │   │   ├── server.cfg             ← Arma 3 server configuration
 │   │   └── basic.cfg              ← Network tuning
-│   ├── main\                      ← Example: Co-op server on port 2302
-│   ├── tvt\                       ← Example: TvT server on port 2402
-│   └── star_wars\                 ← Star Wars 2026 Walzmine (from preset)
 └── scripts\
     ├── Common.ps1                 ← Shared helper functions
     ├── Start-Server.ps1           ← Profile-aware launcher (+ auto HC)
