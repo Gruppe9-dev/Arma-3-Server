@@ -20,11 +20,14 @@
   "_hcNote": "Number of Headless Client processes to start automatically. 0 = disabled.",
 
   "Mods": [
-    "@CBA_A3"
+    "@CBA_A3",
+    "@grp9_stats"
   ],
   "_modsNote": "Folder names of mods inside ServerInstallPath. These are passed as -mod= and must be present on all clients.",
 
-  "ServerMods": [],
+  "ServerMods": [
+    "@grp9_stats_server"
+  ],
   "_serverModsNote": "Server-only mods passed as -serverMod=. Clients do not need these. Cannot be used with Headless Clients.",
 
   "ExtraArgs": [],

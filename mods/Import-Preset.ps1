@@ -63,6 +63,29 @@ $ScriptRoot    = Split-Path -Parent $MyInvocation.MyCommand.Path
 $FrameworkRoot = Split-Path -Parent $ScriptRoot
 . (Join-Path $FrameworkRoot "scripts\Common.ps1")
 
+$RequiredLocalMods = @("@grp9_stats")
+$RequiredServerMods = @("@grp9_stats_server")
+
+function Add-UniqueString {
+    param(
+        [string[]]$Items,
+        [string[]]$Required
+    )
+
+    $result = @()
+    $seen = @{}
+
+    foreach ($item in @($Items + $Required)) {
+        if ([string]::IsNullOrWhiteSpace($item)) { continue }
+        $key = $item.ToLowerInvariant()
+        if ($seen.ContainsKey($key)) { continue }
+        $seen[$key] = $true
+        $result += $item
+    }
+
+    return [string[]]$result
+}
+
 # ---------------------------------------------------------------------------
 # Validate input file
 # ---------------------------------------------------------------------------
@@ -215,8 +238,12 @@ if ($Merge) {
     }
 }
 
-# Build Mods array (just the folder names, for -mod= parameter)
-$newMods = $newWorkshopIds | Select-Object -ExpandProperty FolderName
+# Build Mods array (just the folder names, for -mod= parameter).
+# The stats mods are local build artifacts, not Workshop mods, so keep them
+# outside WorkshopIds but always present in the profile after imports.
+$newMods = Add-UniqueString `
+    -Items ([string[]]($newWorkshopIds | Select-Object -ExpandProperty FolderName)) `
+    -Required $RequiredLocalMods
 
 # ---------------------------------------------------------------------------
 # Format profile.json in a clean, human-readable style:
@@ -309,6 +336,10 @@ $existingServerMods = @()
 if ($profileData.PSObject.Properties.Name -contains "ServerMods") {
     $existingServerMods = @($profileData.ServerMods | Where-Object { $_ })
 }
+$existingServerMods = Add-UniqueString `
+    -Items ([string[]]$existingServerMods) `
+    -Required $RequiredServerMods
+
 $existingExtraArgs = @()
 if ($profileData.PSObject.Properties.Name -contains "ExtraArgs") {
     $existingExtraArgs = @($profileData.ExtraArgs | Where-Object { $_ })
@@ -326,6 +357,7 @@ Set-Content -Path $profileFile -Value $json -Encoding UTF8 -NoNewline
 Write-Log "profile.json updated: $profileFile" "Success"
 Write-Log "  WorkshopIds : $($newWorkshopIds.Count) mods" "Info"
 Write-Log "  Mods[]      : $($newMods.Count) folder names" "Info"
+Write-Log "  Required    : $($RequiredLocalMods -join ', ') / $($RequiredServerMods -join ', ')" "Info"
 
 # ---------------------------------------------------------------------------
 # Optional: run Sync-Mods.ps1 immediately
