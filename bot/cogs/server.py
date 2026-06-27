@@ -154,57 +154,64 @@ class ServerCog(commands.Cog):
             f"$expectedPid = {pid}; "
             f"$profileDir = {_ps_quote(profile_dir)}; "
             f"$port = {port}; "
-            "$main = Get-Process -Id $expectedPid -ErrorAction SilentlyContinue; "
-            "if ($main -and $main.ProcessName -notlike 'arma3server*') { $main = $null } "
-            # The PID returned by CreateProcess can go stale on some starts. Fall back to
-            # the Arma server process matching this profile path or game port.
-            "if (-not $main) { "
-            "  $escapedProfileDir = [WildcardPattern]::Escape($profileDir); "
-            "  $candidates = @(Get-CimInstance Win32_Process -Filter \"Name LIKE 'arma3server%'\" -EA SilentlyContinue "
-            "    | Where-Object { "
-            "        $_.CommandLine -and ("
-            "          $_.CommandLine -like \"*$escapedProfileDir*\" -or "
-            "          $_.CommandLine -like \"*-port=$port*\""
-            "        )"
-            "      } "
-            "    | Sort-Object CreationDate -Descending); "
-            "  if ($candidates.Count -gt 0) { "
-            "    $main = Get-Process -Id ([int]$candidates[0].ProcessId) -ErrorAction SilentlyContinue; "
-            "  } "
+            "$escapedProfileDir = [WildcardPattern]::Escape($profileDir); "
+            "$allArmaServer = @(Get-CimInstance Win32_Process -Filter \"Name LIKE 'arma3server%'\" -EA SilentlyContinue); "
+            "$serverCandidates = @($allArmaServer | Where-Object { "
+            "  $_.CommandLine -and "
+            "  $_.CommandLine -notmatch '(^|\\s)-client(\\s|$)' -and "
+            "  ("
+            "    $_.Name -like 'arma3serverprofiling*' -or "
+            "    $_.CommandLine -like \"*$escapedProfileDir*\" -or "
+            "    $_.CommandLine -like \"*-port=$port*\""
+            "  )"
+            "}); "
+            "$mainCandidate = @($serverCandidates | Where-Object { [int]$_.ProcessId -eq $expectedPid } | Select-Object -First 1); "
+            "if (-not $mainCandidate) { "
+            "  $mainCandidate = @($serverCandidates "
+            "    | Sort-Object @{Expression={ if ($_.Name -like 'arma3serverprofiling*') { 0 } else { 1 } }}, CreationDate "
+            "    | Select-Object -First 1); "
+            "} "
+            "$main = $null; "
+            "if ($mainCandidate) { "
+            "  $main = Get-Process -Id ([int]$mainCandidate[0].ProcessId) -ErrorAction SilentlyContinue; "
             "} "
             "if (-not $main) { 'stopped'; exit } "
             "$up = [math]::Floor(((Get-Date) - $main.StartTime).TotalSeconds); "
-            # Sample CPU over 1 s for accurate % (snapshot delta / elapsed / logical cores)
-            "$cores = (Get-CimInstance Win32_ComputerSystem -EA SilentlyContinue).NumberOfLogicalProcessors; "
-            "$snap1 = (Get-Process -Name 'arma3*' -EA SilentlyContinue | Measure-Object CPU -Sum).Sum; "
-            "Start-Sleep -Milliseconds 1000; "
-            "$all  = Get-Process -Name 'arma3*' -ErrorAction SilentlyContinue; "
-            "$snap2 = ($all | Measure-Object CPU -Sum).Sum; "
-            "$cpuPct = [math]::Round(($snap2 - $snap1) / (1.0 * [math]::Max($cores,1)) * 100, 1); "
-            # RAM total
-            "$totalRam = [math]::Round(($all | Measure-Object WorkingSet64 -Sum).Sum / 1MB, 0); "
-            "$cnt = $all.Count; "
             "$mainPid = $main.Id; "
-            "\"$cpuPct|$totalRam|$up|$cnt|$cores|$mainPid\""
+            "$cores = (Get-CimInstance Win32_ComputerSystem -EA SilentlyContinue).NumberOfLogicalProcessors; "
+            "if (-not $cores) { $cores = 1 } "
+            "$all1 = @(Get-Process -Name 'arma3*' -EA SilentlyContinue); "
+            "$snap1 = ($all1 | Measure-Object CPU -Sum).Sum; "
+            "if ($null -eq $snap1) { $snap1 = 0 } "
+            "Start-Sleep -Milliseconds 1000; "
+            "$all = @(Get-Process -Name 'arma3*' -ErrorAction SilentlyContinue); "
+            "$snap2 = ($all | Measure-Object CPU -Sum).Sum; "
+            "if ($null -eq $snap2) { $snap2 = $snap1 } "
+            "$cpuPct = [math]::Round([math]::Max(0, ($snap2 - $snap1)) / (1.0 * [math]::Max($cores,1)) * 100, 1); "
+            "$totalRam = [math]::Round(($all | Measure-Object WorkingSet64 -Sum).Sum / 1MB, 0); "
+            "if ($null -eq $totalRam) { $totalRam = 0 } "
+            "$cnt = $all.Count; "
+            "\"ok|$mainPid|$cpuPct|$totalRam|$up|$cnt|$cores\""
         )
-        _, out = await ssh_helper.run_ps_command(ps)
+        code, out = await ssh_helper.run_ps_command(ps)
         for line in out.splitlines():
             line = line.strip()
             if line == "stopped":
                 return None
-            if re.match(r"^[\d.]+\|\d+\|\d+\|\d+\|\d+\|\d+$", line):
+            if re.match(r"^ok\|\d+\|-?[\d.]+\|\d+\|\d+\|\d+\|\d+$", line):
                 parts = line.split("|")
                 try:
                     return {
-                        "cpu_pct":    float(parts[0]),
-                        "ram_mb":     int(parts[1]),
-                        "uptime_s":   int(parts[2]),
-                        "proc_count": int(parts[3]),
-                        "cores":      int(parts[4]),
-                        "pid":        int(parts[5]),
+                        "pid":        int(parts[1]),
+                        "cpu_pct":    float(parts[2]),
+                        "ram_mb":     int(parts[3]),
+                        "uptime_s":   int(parts[4]),
+                        "proc_count": int(parts[5]),
+                        "cores":      int(parts[6]),
                     }
                 except ValueError:
                     return None
+        logger.warning("Could not parse live-status process stats (exit=%s): %r", code, out)
         return None
 
     # ── internal: A2S query (run in thread — library is synchronous) ──────────
