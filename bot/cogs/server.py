@@ -25,6 +25,11 @@ _LIVE_UPDATE_INTERVAL = 30   # seconds between embed refreshes
 _LIVE_MAX_RUNTIME     = 48   # hours before auto-stop (safety cap)
 
 
+def _ps_quote(value: str) -> str:
+    """Quote a string for single-quoted PowerShell literals."""
+    return "'" + value.replace("'", "''") + "'"
+
+
 async def _deny(interaction: discord.Interaction) -> None:
     embed = discord.Embed(
         title="Access Denied",
@@ -137,16 +142,36 @@ class ServerCog(commands.Cog):
 
     # ── internal: query process stats via SSH ──────────────────────────────────
 
-    async def _get_proc_stats(self, pid: int) -> dict | None:
+    async def _get_proc_stats(self, profile: str, pid: int, port: int) -> dict | None:
         """Return aggregated CPU/RAM/uptime for the server stack, or None if main PID gone.
 
-        Uptime is derived from the main server PID (online/offline signal).
+        Uptime is derived from the main server process (online/offline signal).
         CPU and RAM are summed across ALL arma3* processes (server + HCs).
         """
+        profile_dir = f"{config.SCRIPTS_PATH.rstrip('\\')}\\profiles\\{profile}"
         ps = (
             "$ProgressPreference = 'SilentlyContinue'; "
-            # Check main server PID for uptime / online detection
-            f"$main = Get-Process -Id {pid} -ErrorAction SilentlyContinue; "
+            f"$expectedPid = {pid}; "
+            f"$profileDir = {_ps_quote(profile_dir)}; "
+            f"$port = {port}; "
+            "$main = Get-Process -Id $expectedPid -ErrorAction SilentlyContinue; "
+            "if ($main -and $main.ProcessName -notlike 'arma3server*') { $main = $null } "
+            # The PID returned by CreateProcess can go stale on some starts. Fall back to
+            # the Arma server process matching this profile path or game port.
+            "if (-not $main) { "
+            "  $escapedProfileDir = [WildcardPattern]::Escape($profileDir); "
+            "  $candidates = @(Get-CimInstance Win32_Process -Filter \"Name LIKE 'arma3server%'\" -EA SilentlyContinue "
+            "    | Where-Object { "
+            "        $_.CommandLine -and ("
+            "          $_.CommandLine -like \"*$escapedProfileDir*\" -or "
+            "          $_.CommandLine -like \"*-port=$port*\""
+            "        )"
+            "      } "
+            "    | Sort-Object CreationDate -Descending); "
+            "  if ($candidates.Count -gt 0) { "
+            "    $main = Get-Process -Id ([int]$candidates[0].ProcessId) -ErrorAction SilentlyContinue; "
+            "  } "
+            "} "
             "if (-not $main) { 'stopped'; exit } "
             "$up = [math]::Floor(((Get-Date) - $main.StartTime).TotalSeconds); "
             # Sample CPU over 1 s for accurate % (snapshot delta / elapsed / logical cores)
@@ -159,14 +184,15 @@ class ServerCog(commands.Cog):
             # RAM total
             "$totalRam = [math]::Round(($all | Measure-Object WorkingSet64 -Sum).Sum / 1MB, 0); "
             "$cnt = $all.Count; "
-            "\"$cpuPct|$totalRam|$up|$cnt|$cores\""
+            "$mainPid = $main.Id; "
+            "\"$cpuPct|$totalRam|$up|$cnt|$cores|$mainPid\""
         )
         _, out = await ssh_helper.run_ps_command(ps)
         for line in out.splitlines():
             line = line.strip()
             if line == "stopped":
                 return None
-            if re.match(r"^[\d.]+\|\d+\|\d+\|\d+\|\d+$", line):
+            if re.match(r"^[\d.]+\|\d+\|\d+\|\d+\|\d+\|\d+$", line):
                 parts = line.split("|")
                 try:
                     return {
@@ -175,7 +201,7 @@ class ServerCog(commands.Cog):
                         "uptime_s":   int(parts[2]),
                         "proc_count": int(parts[3]),
                         "cores":      int(parts[4]),
-                        "pid":        pid,
+                        "pid":        int(parts[5]),
                     }
                 except ValueError:
                     return None
@@ -235,7 +261,7 @@ class ServerCog(commands.Cog):
 
         try:
             while asyncio.get_event_loop().time() < deadline:
-                proc     = await self._get_proc_stats(pid)
+                proc     = await self._get_proc_stats(profile, pid, query_port - 1)
                 a2s_info = await self._get_a2s_info(host, query_port) if proc else None
                 embed    = _build_live_embed(profile, proc, a2s_info)
 
