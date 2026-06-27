@@ -23,6 +23,8 @@ logger = logging.getLogger(__name__)
 
 _LIVE_UPDATE_INTERVAL = 30   # seconds between embed refreshes
 _LIVE_MAX_RUNTIME     = 48   # hours before auto-stop (safety cap)
+_LIVE_START_GRACE     = 300  # seconds to tolerate missing process during startup
+_LIVE_MISS_LIMIT      = 3    # consecutive misses after startup before marking offline
 
 
 def _ps_quote(value: str) -> str:
@@ -125,6 +127,20 @@ def _build_live_embed(
     embed.add_field(name="⚙️  Processes", value=f"{proc_count} ({cores} cores)", inline=True)
 
     embed.set_footer(text=f"Profile: {profile}  •  CPU & RAM = server + all HCs  •  refresh every {_LIVE_UPDATE_INTERVAL}s")
+    return embed
+
+
+def _build_starting_embed(profile: str, pid: int, miss_count: int) -> discord.Embed:
+    """Build a startup/waiting embed while the host process is not visible yet."""
+    embed = discord.Embed(
+        title=f"🟡  Server Starting — `{profile}`",
+        color=discord.Color.yellow(),
+        timestamp=datetime.now(timezone.utc),
+    )
+    embed.add_field(name="👥  Players", value="—", inline=True)
+    embed.add_field(name="🗺️  Mission", value="Starting…", inline=True)
+    embed.add_field(name="🔢  Expected PID", value=str(pid), inline=True)
+    embed.set_footer(text=f"Waiting for server process via SSH • miss {miss_count}")
     return embed
 
 
@@ -264,14 +280,39 @@ class ServerCog(commands.Cog):
         query_port: int,
     ) -> None:
         host        = config.SERVER_HOST
-        deadline    = asyncio.get_event_loop().time() + _LIVE_MAX_RUNTIME * 3600
+        loop        = asyncio.get_event_loop()
+        started_at  = loop.time()
+        deadline    = started_at + _LIVE_MAX_RUNTIME * 3600
         stopped     = False
+        miss_count  = 0
+        saw_running = False
 
         try:
-            while asyncio.get_event_loop().time() < deadline:
+            while loop.time() < deadline:
                 proc     = await self._get_proc_stats(profile, pid, query_port - 1)
                 a2s_info = await self._get_a2s_info(host, query_port) if proc else None
-                embed    = _build_live_embed(profile, proc, a2s_info)
+
+                if proc is None:
+                    miss_count += 1
+                    elapsed = loop.time() - started_at
+                    still_starting = not saw_running and elapsed < _LIVE_START_GRACE
+                    transient_miss = saw_running and miss_count < _LIVE_MISS_LIMIT
+
+                    if still_starting or transient_miss:
+                        logger.info(
+                            "Live-status process miss for %s (miss=%d, elapsed=%ds, saw_running=%s)",
+                            profile,
+                            miss_count,
+                            int(elapsed),
+                            saw_running,
+                        )
+                        embed = _build_starting_embed(profile, pid, miss_count)
+                    else:
+                        embed = _build_live_embed(profile, None, None)
+                else:
+                    miss_count = 0
+                    saw_running = True
+                    embed = _build_live_embed(profile, proc, a2s_info)
 
                 try:
                     await status_msg.edit(embed=embed)
@@ -281,11 +322,14 @@ class ServerCog(commands.Cog):
                 except discord.HTTPException as exc:
                     logger.warning("Edit failed: %s", exc)
 
-                if proc is None:
+                if proc is None and not (not saw_running and (loop.time() - started_at) < _LIVE_START_GRACE):
+                    if saw_running and miss_count < _LIVE_MISS_LIMIT:
+                        await asyncio.sleep(10)
+                        continue
                     stopped = True
                     break
 
-                await asyncio.sleep(_LIVE_UPDATE_INTERVAL)
+                await asyncio.sleep(10 if proc is None else _LIVE_UPDATE_INTERVAL)
 
         except asyncio.CancelledError:
             # /server stop was called — update embed to offline
