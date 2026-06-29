@@ -63,7 +63,6 @@ $ScriptRoot    = Split-Path -Parent $MyInvocation.MyCommand.Path
 $FrameworkRoot = Split-Path -Parent $ScriptRoot
 . (Join-Path $FrameworkRoot "scripts\Common.ps1")
 
-$RequiredLocalMods = @("@grp9_mod", "@grp9_stats")
 $RequiredServerMods = @("@grp9_stats_server")
 
 function Add-UniqueString {
@@ -239,11 +238,11 @@ if ($Merge) {
 }
 
 # Build Mods array (just the folder names, for -mod= parameter).
-# The stats mods are local build artifacts, not Workshop mods, so keep them
-# outside WorkshopIds but always present in the profile after imports.
+# Client-side GRP9 mods are published through Steam Workshop and should come
+# from the imported preset instead of being forced into every profile.
 $newMods = Add-UniqueString `
     -Items ([string[]]($newWorkshopIds | Select-Object -ExpandProperty FolderName)) `
-    -Required $RequiredLocalMods
+    -Required @()
 
 # ---------------------------------------------------------------------------
 # Format profile.json in a clean, human-readable style:
@@ -357,7 +356,8 @@ Set-Content -Path $profileFile -Value $json -Encoding UTF8 -NoNewline
 Write-Log "profile.json updated: $profileFile" "Success"
 Write-Log "  WorkshopIds : $($newWorkshopIds.Count) mods" "Info"
 Write-Log "  Mods[]      : $($newMods.Count) folder names" "Info"
-Write-Log "  Required    : $($RequiredLocalMods -join ', ') / $($RequiredServerMods -join ', ')" "Info"
+Write-Log "  ServerMods  : $($existingServerMods.Count) folder names" "Info"
+Write-Log "  Required server mods: $($RequiredServerMods -join ', ')" "Info"
 
 # ---------------------------------------------------------------------------
 # Optional: run Sync-Mods.ps1 immediately
