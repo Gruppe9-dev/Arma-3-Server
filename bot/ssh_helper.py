@@ -7,6 +7,9 @@ avoids stale connection issues for a low-frequency management bot.
 
 import base64
 import logging
+import json
+import re
+from pathlib import Path
 
 import asyncssh
 
@@ -31,23 +34,53 @@ def _connection_params() -> dict:
         port=config.SSH_PORT,
         username=config.SSH_USER,
         client_keys=[_get_key()],
-        known_hosts=None,   # host-key pinning is not required for local container→host traffic
+        known_hosts=config.SSH_KNOWN_HOSTS,
+        connect_timeout=15,
+        login_timeout=15,
     )
 
 
 # ── Command execution ──────────────────────────────────────────────────────────
 
-async def run_ps_file(rel_path: str, *args: str) -> tuple[int, str]:
-    """
-    Execute a PowerShell script file from SCRIPTS_PATH on the host via SSH.
+_SCRIPTS = {
+    "scripts/Start-Server.ps1": {"Profile"},
+    "scripts/Stop-Server.ps1": {"Profile"},
+    "scripts/Restart-Server.ps1": {"Profile"},
+    "scripts/Set-InstancePreset.ps1": {"Profile", "Preset"},
+    "scripts/Get-ServerStatus.ps1": {"Profile"},
+    "scripts/Auto-Update.ps1": set(),
+    "setup/Update-Server.ps1": set(),
+    "mods/Sync-Mods.ps1": {"Profile", "Force", "Update", "RestartServer", "CheckOnly"},
+    "mods/Import-Preset.ps1": {"Profile", "PresetFile", "Merge", "SyncAfter"},
+}
 
-    rel_path uses forward slashes relative to SCRIPTS_PATH,
-    e.g. "scripts/Start-Server.ps1" or "mods/Sync-Mods.ps1".
-    """
-    abs_path = config.SCRIPTS_PATH.rstrip("\\") + "\\" + rel_path.replace("/", "\\")
-    extra    = " ".join(args)
-    cmd      = f'powershell.exe -ExecutionPolicy Bypass -NonInteractive -File "{abs_path}" {extra}'.strip()
-    return await _exec(cmd)
+
+def build_ps_invocation(rel_path: str, parameters: dict) -> str:
+    """Pass untrusted values as JSON data, never as executable PowerShell text."""
+    if rel_path not in _SCRIPTS or set(parameters) - _SCRIPTS[rel_path]:
+        raise ValueError("Unsupported host operation or parameter")
+    for key, value in parameters.items():
+        if not isinstance(value, (str, bool, int)):
+            raise ValueError("Unsupported parameter value")
+        if key in {"Profile", "Preset"} and not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,63}|_all", str(value)):
+            raise ValueError("Invalid profile or preset ID")
+        if value == "_all" and (rel_path != "mods/Sync-Mods.ps1" or key != "Profile"):
+            raise ValueError("_all is only supported for owner mod synchronization")
+    payload = base64.b64encode(json.dumps(parameters, ensure_ascii=True).encode("utf-8")).decode("ascii")
+    script_path = config.SCRIPTS_PATH.rstrip("\\") + "\\" + rel_path.replace("/", "\\")
+    literal = "'" + script_path.replace("'", "''") + "'"
+    return (
+        "$ErrorActionPreference = 'Stop'; $ProgressPreference = 'SilentlyContinue'; "
+        f"$data = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('{payload}')) | ConvertFrom-Json; "
+        "$parameters = @{}; foreach ($property in $data.PSObject.Properties) { $parameters[$property.Name] = $property.Value }; "
+        f"try {{ $global:LASTEXITCODE = 0; & {literal} @parameters; $ok = $?; "
+        "if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; if (-not $ok) { exit 1 } } catch { Write-Error $_; exit 1 }"
+    )
+
+
+async def run_ps_file(rel_path: str, **parameters) -> tuple[int, str]:
+    log.info("Host operation: %s profile=%r", rel_path, parameters.get("Profile"))
+    return await run_ps_command(build_ps_invocation(rel_path, parameters))
 
 
 async def run_ps_command(ps_code: str) -> tuple[int, str]:
@@ -56,21 +89,22 @@ async def run_ps_command(ps_code: str) -> tuple[int, str]:
     Avoids any shell-escaping issues with special characters.
     """
     encoded = base64.b64encode(ps_code.encode("utf-16-le")).decode()
-    cmd     = f"powershell.exe -ExecutionPolicy Bypass -NonInteractive -EncodedCommand {encoded}"
+    cmd     = f"powershell.exe -NoProfile -ExecutionPolicy Bypass -NonInteractive -EncodedCommand {encoded}"
     return await _exec(cmd)
 
 
 async def _exec(cmd: str) -> tuple[int, str]:
-    log.info("SSH exec → %s", cmd)
+    if not Path(config.SSH_KNOWN_HOSTS).is_file():
+        return 1, "SSH host key file is missing. Run setup/Export-SshHostKey.ps1 on the dedicated host."
     try:
         async with asyncssh.connect(**_connection_params()) as conn:
-            result = await conn.run(cmd, check=False)
-    except (asyncssh.Error, OSError) as exc:
+            result = await conn.run(cmd, check=False, timeout=config.SSH_TIMEOUT_SECONDS)
+    except (asyncssh.Error, OSError, TimeoutError) as exc:
         log.error("SSH error: %s", exc)
-        return 1, f"SSH-Verbindungsfehler: {exc}"
+        return 255, "SSH connection failed or timed out. The host operation may still be running; check status before retrying."
 
     output = ((result.stdout or "") + (result.stderr or "")).strip()
-    return result.returncode or 0, output
+    return result.returncode if result.returncode is not None else 255, output
 
 
 # ── File upload ────────────────────────────────────────────────────────────────
@@ -97,8 +131,8 @@ async def upload_bytes(data: bytes, remote_path: str) -> None:
 
                 async with await sftp.open(sftp_path, "wb") as f:
                     await f.write(data)
-    except (asyncssh.Error, OSError) as exc:
-        raise RuntimeError(f"SFTP-Upload fehlgeschlagen: {exc}") from exc
+    except (asyncssh.Error, OSError, TimeoutError) as exc:
+        raise RuntimeError("SFTP upload failed. See the private bot log.") from exc
 
 
 # ── Shared reply helpers ───────────────────────────────────────────────────────

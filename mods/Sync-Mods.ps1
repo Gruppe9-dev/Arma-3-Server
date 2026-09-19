@@ -1,4 +1,4 @@
-#Requires -Version 5.1
+﻿#Requires -Version 5.1
 <#
 .SYNOPSIS
     Downloads, updates, and deploys Steam Workshop mods for Arma 3.
@@ -103,6 +103,7 @@ function Test-SafeWorkshopId {
 
 function Test-SafeFolderName {
     param([string]$Value)
+    if ($Value -notmatch '^@[\w.-]+$' -or $Value -match '\.\.') { return $false }
     if ([string]::IsNullOrWhiteSpace($Value) -or [IO.Path]::IsPathRooted($Value)) {
         return $false
     }
@@ -124,6 +125,13 @@ function Add-ValidatedMod {
     }
     if (-not (Test-SafeFolderName -Value $TargetFolder)) {
         throw "Invalid mod folder name '$TargetFolder'."
+    }
+
+    foreach ($existing in $List) {
+        if ($existing.WorkshopId -eq $Id -and $existing.FolderName -eq $TargetFolder) { return }
+        if ($existing.WorkshopId -eq $Id -or $existing.FolderName -eq $TargetFolder) {
+            throw 'Shared mods require one canonical folder per Workshop ID and one Workshop ID per folder.'
+        }
     }
 
     $null = $List.Add(@{
@@ -284,6 +292,13 @@ function Install-WorkshopMod {
 }
 
 $Config   = Get-FrameworkConfig
+$maintenanceLock = $null
+$serverWasStopped = $false
+if (-not $CheckOnly) {
+    $maintenanceLock = Enter-FrameworkMaintenanceLock -Config $Config -Purpose "mod-sync:$Profile"
+    if (-not $maintenanceLock) { throw 'Another framework operation is running.' }
+}
+try {
 $SteamCmd = Join-Path $Config.SteamCMDPath "steamcmd.exe"
 
 # ---------------------------------------------------------------------------
@@ -295,18 +310,14 @@ $profileData = $null
 if ($PSCmdlet.ParameterSetName -eq "Single") {
     Add-ValidatedMod -List $modList -Id $WorkshopId -TargetFolder $FolderName
 } elseif ($Profile -eq "_all") {
-    $seen = @{}
     foreach ($profileName in Get-AvailableProfiles) {
         $currentProfile = Get-Profile -ProfileName $profileName
         if ($currentProfile.PSObject.Properties.Name -notcontains "WorkshopIds") {
             continue
         }
-        foreach ($entry in @($currentProfile.WorkshopIds)) {
+        foreach ($entry in @(Get-ProfileWorkshopEntries $currentProfile)) {
             $id = "$($entry.Id)"
-            if (-not $seen.ContainsKey($id)) {
-                Add-ValidatedMod -List $modList -Id $id -TargetFolder "$($entry.FolderName)"
-                $seen[$id] = $true
-            }
+            Add-ValidatedMod -List $modList -Id $id -TargetFolder "$($entry.FolderName)"
         }
     }
 } else {
@@ -315,7 +326,7 @@ if ($PSCmdlet.ParameterSetName -eq "Single") {
         Write-Log "Profile '$Profile' has no WorkshopIds defined in profile.json." "Warning"
         exit 0
     }
-    foreach ($entry in @($profileData.WorkshopIds)) {
+    foreach ($entry in @(Get-ProfileWorkshopEntries $profileData)) {
         Add-ValidatedMod -List $modList -Id "$($entry.Id)" -TargetFolder "$($entry.FolderName)"
     }
 }
@@ -324,6 +335,10 @@ if ($modList.Count -eq 0) {
     Write-Log "No mods selected." "Info"
     exit 0
 }
+
+# A concrete-profile sync must not overwrite a different community's mod folder.
+$selectedEntries = @($modList | ForEach-Object { [PSCustomObject]@{ Id=$_.WorkshopId; FolderName=$_.FolderName } })
+$null = Get-SharedWorkshopCatalog -AdditionalEntries $selectedEntries
 
 $mode = if ($Update) { "Update" } elseif ($Force) { "Force sync" } else { "Sync" }
 Write-Log "=== Mod ${mode}: $($modList.Count) mod(s) ===" "Header"
@@ -465,48 +480,16 @@ if (-not (Test-Path -LiteralPath $SteamCmd)) {
 # ---------------------------------------------------------------------------
 # Protect running profiles from live mod replacement
 # ---------------------------------------------------------------------------
-$serverWasStopped = $false
-if ($Update -and $Profile -ne "_all" -and $profileData) {
-    $pidFile = Join-Path $profileData.ProfileDir "server.pid"
-    $serverRunning = $false
-    if (Test-Path -LiteralPath $pidFile) {
-        $pidText = (Get-Content -LiteralPath $pidFile -ErrorAction SilentlyContinue | Select-Object -First 1)
-        $serverPid = 0
-        if ([int]::TryParse("$pidText", [ref]$serverPid)) {
-            $process = Get-Process -Id $serverPid -ErrorAction SilentlyContinue
-            $serverRunning = $null -ne $process -and $process.ProcessName -like "arma3server*"
-        }
+$active = @(Get-ServerProcesses)
+if ($active.Count -gt 0 -and $RestartServer -and $profileData) {
+    $ownedIds = @(Get-InstanceProcesses $profileData | ForEach-Object { [int]$_.ProcessId })
+    if (@($active | Where-Object { $_.Id -notin $ownedIds }).Count -gt 0) {
+        throw 'Other instances are running. Shared mod updates require every instance to be stopped.'
     }
-
-    if (-not $serverRunning) {
-        $escapedProfileDir = [WildcardPattern]::Escape($profileData.ProfileDir)
-        $profilePort = [int]$profileData.Port
-        $matchingProcesses = @(Get-CimInstance Win32_Process -Filter "Name LIKE 'arma3server%'" -ErrorAction SilentlyContinue |
-            Where-Object {
-                $commandLine = if ($_.CommandLine) { $_.CommandLine } else { '' }
-                $isHeadlessClient = $commandLine -match '(^|\s)-client(\s|$)'
-                -not $isHeadlessClient -and
-                ($commandLine -like "*$escapedProfileDir*" -or $commandLine -like "*-port=$profilePort*")
-            })
-        $serverRunning = $matchingProcesses.Count -gt 0
-    }
-
-    if ($serverRunning -and -not $RestartServer) {
-        Write-Log "Profile '$Profile' is running. Re-run with -RestartServer or stop it before updating mods." "Error"
-        exit 1
-    }
-
-    if ($serverRunning) {
-        Write-Log "Updates are available; stopping profile '$Profile' before deployment..." "Warning"
-        $stopScript = Join-Path $FrameworkRoot "scripts\Stop-Server.ps1"
-        & powershell.exe -NoProfile -ExecutionPolicy Bypass -NonInteractive -File $stopScript -Profile $Profile
-        if ($LASTEXITCODE -ne 0) {
-            Write-Log "Could not stop profile '$Profile'; update aborted." "Error"
-            exit 1
-        }
-        $serverWasStopped = $true
-    }
+    Stop-InstanceProcesses $profileData
+    $serverWasStopped = $true
 }
+Assert-ServersIdle
 
 # ---------------------------------------------------------------------------
 # Download and transactionally deploy selected mods
@@ -589,15 +572,7 @@ try {
     $steamPass = $null
     [GC]::Collect()
 
-    if ($serverWasStopped) {
-        Write-Log "Starting profile '$Profile' after mod maintenance..." "Info"
-        $startScript = Join-Path $FrameworkRoot "scripts\Start-Server.ps1"
-        & powershell.exe -NoProfile -ExecutionPolicy Bypass -NonInteractive -File $startScript -Profile $Profile
-        if ($LASTEXITCODE -ne 0) {
-            Write-Log "Profile '$Profile' could not be restarted." "Error"
-            $operationFailed = $true
-        }
-    }
+
 }
 
 # ---------------------------------------------------------------------------
@@ -614,3 +589,18 @@ Write-Log "  Keys dir: $keysDir" "Info"
 if ($operationFailed -or $failed -gt 0) {
     exit 1
 }
+
+} finally {
+    if ($maintenanceLock) { Exit-FrameworkMaintenanceLock -Lock $maintenanceLock -Config $Config }
+    if ($serverWasStopped) {
+        Write-Log "Starting profile '$Profile' after mod maintenance..." "Info"
+        $startScript = Join-Path $FrameworkRoot "scripts\Start-Server.ps1"
+        & powershell.exe -NoProfile -ExecutionPolicy Bypass -NonInteractive -File $startScript -Profile $Profile
+        if ($LASTEXITCODE -ne 0) {
+            Write-Log "Profile '$Profile' could not be restarted." "Error"
+            $operationFailed = $true
+        }
+    }
+}
+
+if ($operationFailed -or $failed -gt 0) { exit 1 }

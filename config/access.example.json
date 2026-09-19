@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "owner_user_ids": ["REPLACE_WITH_YOUR_DISCORD_USER_ID"],
+  "guilds": {
+    "REPLACE_WITH_GRUPPE9_GUILD_ID": {
+      "profiles": {
+        "main": {
+          "operator_role_ids": ["REPLACE_WITH_GRUPPE9_OPERATOR_ROLE_ID"],
+          "operator_user_ids": [],
+          "viewer_role_ids": [],
+          "viewer_user_ids": []
+        }
+      }
+    },
+    "REPLACE_WITH_FRIEND_GUILD_ID": {
+      "profiles": {
+        "friend": {
+          "operator_role_ids": [],
+          "operator_user_ids": ["REPLACE_WITH_FRIEND_DISCORD_USER_ID"],
+          "viewer_role_ids": [],
+          "viewer_user_ids": []
+        }
+      }
+    }
+  }
+}

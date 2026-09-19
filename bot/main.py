@@ -4,12 +4,14 @@ Arma 3 Server Discord Bot — entry point.
 
 import asyncio
 import logging
+from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
 import discord
 from discord.ext import commands
 
 import config
+from jobs import JobRunner, JobStore
 
 # ── Logging ────────────────────────────────────────────────────────────────────
 Path("logs").mkdir(exist_ok=True)
@@ -18,7 +20,7 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     handlers=[
-        logging.FileHandler("logs/bot.log", encoding="utf-8"),
+        RotatingFileHandler("logs/bot.log", maxBytes=5_000_000, backupCount=5, encoding="utf-8"),
         logging.StreamHandler(),
     ],
 )
@@ -42,7 +44,10 @@ class ArmaBot(commands.Bot):
             command_prefix="!",
             intents=discord.Intents.default(),
             help_command=None,
+            allowed_mentions=discord.AllowedMentions.none(),
         )
+        self.store = JobStore(Path(config.DATA_PATH) / "jobs.sqlite3")
+        self.jobs = JobRunner(self.store)
 
     async def setup_hook(self) -> None:
         """Load all cogs and sync guild-specific slash commands for instant availability."""
@@ -52,14 +57,16 @@ class ArmaBot(commands.Bot):
                 logger.info("Loaded cog: %s", cog)
             except Exception as exc:
                 logger.error("Failed to load cog %s: %s", cog, exc)
+                raise
 
-        guild = discord.Object(id=config.GUILD_ID)
-        self.tree.copy_global_to(guild=guild)
-        synced = await self.tree.sync(guild=guild)
-        logger.info("Synced %d commands to guild %s.", len(synced), config.GUILD_ID)
+        for guild_id in config.GUILD_IDS:
+            guild = discord.Object(id=guild_id)
+            self.tree.copy_global_to(guild=guild)
+            synced = await self.tree.sync(guild=guild)
+            logger.info("Synced %d commands to guild %s.", len(synced), guild_id)
 
     async def on_ready(self) -> None:
-        logger.info("%s is online (guild %s).", self.user, config.GUILD_ID)
+        logger.info("%s is online (guilds %s).", self.user, config.GUILD_IDS)
         await self.change_presence(
             activity=discord.Activity(
                 type=discord.ActivityType.watching,
@@ -78,6 +85,7 @@ async def main() -> None:
         logger.info("Shutdown requested.")
     except Exception as exc:
         logger.error("Bot encountered an error: %s", exc)
+        raise
     finally:
         await bot.close()
 

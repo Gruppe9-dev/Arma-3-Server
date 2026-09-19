@@ -1,14 +1,10 @@
-"""
-/server command group — start, stop, status, update.
-Includes a persistent live-status embed that updates every 30 s after server start.
-"""
+"""Guild-scoped instance controls and persistent, instance-specific status panels."""
 
 import asyncio
-import base64
-import binascii
+import contextlib
+import json
 import logging
-import re
-from datetime import datetime, timezone
+import time
 
 import a2s
 import discord
@@ -19,570 +15,216 @@ import config
 import ssh_helper
 import utils
 
-logger = logging.getLogger(__name__)
+log = logging.getLogger(__name__)
 
-# ── helpers ────────────────────────────────────────────────────────────────────
-
-_LIVE_UPDATE_INTERVAL = 30   # seconds between embed refreshes
-_LIVE_MAX_RUNTIME     = 48   # hours before auto-stop (safety cap)
-_LIVE_START_GRACE     = 300  # seconds to tolerate missing process during startup
-_LIVE_MISS_LIMIT      = 3    # consecutive misses after startup before marking offline
-_WEBHOOK_TOKEN_ERROR_CODES = {50027, 10015}  # Invalid Webhook Token / Unknown Webhook
-
-
-def _ps_quote(value: str) -> str:
-    """Quote a string for single-quoted PowerShell literals."""
-    return "'" + value.replace("'", "''") + "'"
-
-
-async def _deny(interaction: discord.Interaction) -> None:
-    embed = discord.Embed(
-        title="Access Denied",
-        description="You need the Server-Admin role to use this command.",
-        color=discord.Color.red(),
-    )
-    await interaction.response.send_message(embed=embed, ephemeral=True)
-
-
-async def _reply(
-    interaction: discord.Interaction,
-    title: str,
-    code: int,
-    output: str,
-    profile: str | None = None,
-) -> None:
-    """Filter output first, then build embed + send overflow follow-ups."""
-    filtered = ssh_helper.filter_output(output)
-    # Embed fields max 1024 chars; subtract 10 for ```\n…\n``` wrappers
-    embed_chunks    = ssh_helper.split_output(filtered, size=1010) if filtered else ["(no output)"]
-    overflow_chunks = ssh_helper.split_output(filtered, size=1900) if filtered else []
-
-    color  = discord.Color.green() if code == 0 else discord.Color.red()
-    status = "✅ Success" if code == 0 else f"❌ Error (Exit {code})"
-    embed  = discord.Embed(title=title, color=color, timestamp=datetime.now(timezone.utc))
-
-    if profile:
-        embed.add_field(name="Profile", value=f"`{profile}`", inline=True)
-    embed.add_field(name="Status", value=status, inline=True)
-    embed.add_field(name="Output", value=f"```\n{embed_chunks[0]}\n```", inline=False)
-
-    await interaction.edit_original_response(embed=embed)
-
-    for chunk in overflow_chunks[1:]:
-        await interaction.followup.send(f"```\n{chunk}\n```")
-
-
-def _fmt_uptime(seconds: int) -> str:
-    hours, rem = divmod(seconds, 3600)
-    mins, secs = divmod(rem, 60)
-    if hours:
-        return f"{hours}h {mins:02d}m {secs:02d}s"
-    return f"{mins}m {secs:02d}s"
-
-
-def _build_live_embed(
-    profile: str,
-    proc: dict | None,
-    a2s_info: dict | None,
-    *,
-    a2s_stale: bool = False,
-    mission_override: str | None = None,
-) -> discord.Embed:
-    """Build the live-status embed from gathered stats."""
-    if proc is None:
-        embed = discord.Embed(
-            title=f"🔴  Server Offline — `{profile}`",
-            color=discord.Color.red(),
-            timestamp=datetime.now(timezone.utc),
-        )
-        embed.set_footer(text="Server process has stopped.")
-        return embed
-
-    embed = discord.Embed(
-        title=f"🟢  Server Online — `{profile}`",
-        color=discord.Color.green(),
-        timestamp=datetime.now(timezone.utc),
-    )
-
-    if a2s_info:
-        embed.add_field(
-            name="👥  Players",
-            value=f"{a2s_info['players']} / {a2s_info['max_players']}",
-            inline=True,
-        )
-        embed.add_field(
-            name="🗺️  Mission",
-            value=mission_override or a2s_info["map"] or "—",
-            inline=True,
-        )
-    else:
-        embed.add_field(name="👥  Players", value="—", inline=True)
-        embed.add_field(name="🗺️  Mission", value=mission_override or "Query unavailable", inline=True)
-
-    proc_count = proc.get("proc_count", 1)
-    cores      = proc.get("cores", 1)
-    cpu_pct    = proc.get("cpu_pct", 0.0)
-    # Show % of total system; append per-core equivalent for context
-    per_core   = round(cpu_pct * cores / 100, 1) if cores else cpu_pct
-    cpu_label  = f"{cpu_pct:.1f}%  (~{per_core:.1f} cores)"
-
-    embed.add_field(name="⏱️  Uptime",    value=_fmt_uptime(proc["uptime_s"]),  inline=True)
-    embed.add_field(name="💻  CPU",       value=cpu_label,                       inline=True)
-    embed.add_field(name="💾  RAM",       value=f"{proc['ram_mb']:,} MB",        inline=True)
-    embed.add_field(name="🔢  PID",       value=str(proc["pid"]),                inline=True)
-    embed.add_field(name="⚙️  Processes", value=f"{proc_count} ({cores} cores)", inline=True)
-
-    footer = f"Profile: {profile}  •  CPU & RAM = server + all HCs  •  refresh every {_LIVE_UPDATE_INTERVAL}s"
-    if a2s_stale and mission_override:
-        footer += "  •  Mission from RPT; players are last known A2S values"
-    elif a2s_stale:
-        footer += "  •  A2S unavailable; showing last known query values"
-    elif mission_override:
-        footer += "  •  Mission from RPT; A2S unavailable"
-    embed.set_footer(text=footer)
-    return embed
-
-
-def _build_starting_embed(profile: str, pid: int, miss_count: int) -> discord.Embed:
-    """Build a startup/waiting embed while the host process is not visible yet."""
-    embed = discord.Embed(
-        title=f"🟡  Server Starting — `{profile}`",
-        color=discord.Color.yellow(),
-        timestamp=datetime.now(timezone.utc),
-    )
-    embed.add_field(name="👥  Players", value="—", inline=True)
-    embed.add_field(name="🗺️  Mission", value="Starting…", inline=True)
-    embed.add_field(name="🔢  Expected PID", value=str(pid), inline=True)
-    embed.set_footer(text=f"Waiting for server process via SSH • miss {miss_count}")
-    return embed
-
-
-# ── Cog ────────────────────────────────────────────────────────────────────────
 
 class ServerCog(commands.Cog):
-    """Arma 3 Server management commands (/server group)."""
+    server = app_commands.Group(name="server", description="Manage your assigned Arma instances")
 
-    server = app_commands.Group(name="server", description="Arma 3 server management")
-
-    def __init__(self, bot: commands.Bot) -> None:
+    def __init__(self, bot):
         self.bot = bot
-        # profile → running asyncio.Task
-        self._live_tasks: dict[str, asyncio.Task] = {}
+        self._tasks = {}
+        self._restore_task = None
+        self._catalog = []
+        self._catalog_time = 0.0
 
-    async def _edit_live_status_message(
-        self,
-        channel: discord.abc.Messageable,
-        status_msg: discord.Message,
-        profile: str,
-        embed: discord.Embed,
-    ) -> tuple[discord.Message, bool]:
-        """Edit the live-status message, replacing stale webhook messages when needed."""
+    async def cog_load(self):
+        self._restore_task = asyncio.create_task(self._restore_panels())
+
+    async def cog_unload(self):
+        tasks = list(self._tasks.values()) + ([self._restore_task] if self._restore_task else [])
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+
+    async def _status(self, profile=None):
+        parameters = {"Profile": profile} if profile else {}
         try:
-            await status_msg.edit(embed=embed)
-            return status_msg, True
-        except discord.NotFound as exc:
-            if getattr(exc, "code", None) in _WEBHOOK_TOKEN_ERROR_CODES:
-                logger.warning(
-                    "Live-status webhook message for %s is stale (%s); posting a fresh channel message.",
-                    profile,
-                    exc,
-                )
-                try:
-                    return await channel.send(embed=embed), True
-                except discord.HTTPException as send_exc:
-                    logger.warning("Could not replace live-status message for %s: %s", profile, send_exc)
-                    return status_msg, True
+            code, output = await asyncio.wait_for(
+                ssh_helper.run_ps_file("scripts/Get-ServerStatus.ps1", **parameters), timeout=30,
+            )
+        except TimeoutError as exc:
+            raise RuntimeError("Host status timed out") from exc
+        if code:
+            raise RuntimeError("Host status is unavailable")
+        for line in output.splitlines():
+            if line.startswith("INSTANCE_JSON="):
+                value = json.loads(line.removeprefix("INSTANCE_JSON="))
+                if isinstance(value, list):
+                    return value
+        raise RuntimeError("Invalid host status response")
 
-            logger.info("Live-status message deleted — stopping loop for %s", profile)
-            return status_msg, False
-        except discord.HTTPException as exc:
-            if getattr(exc, "code", None) in _WEBHOOK_TOKEN_ERROR_CODES or "Invalid Webhook Token" in str(exc):
-                logger.warning(
-                    "Live-status edit for %s failed because the webhook token is invalid; posting a fresh channel message.",
-                    profile,
-                )
-                try:
-                    return await channel.send(embed=embed), True
-                except discord.HTTPException as send_exc:
-                    logger.warning("Could not replace live-status message for %s: %s", profile, send_exc)
-                    return status_msg, True
+    async def _get_catalog(self):
+        if not self._catalog or time.monotonic() - self._catalog_time > 15:
+            self._catalog = await self._status()
+            self._catalog_time = time.monotonic()
+        return self._catalog
 
-            logger.warning("Edit failed: %s", exc)
-            return status_msg, True
-
-    # ── internal: query process stats via SSH ──────────────────────────────────
-
-    async def _get_proc_stats(self, profile: str, pid: int, port: int) -> dict | None:
-        """Return aggregated CPU/RAM/uptime for the server stack, or None if main PID gone.
-
-        Uptime is derived from the main server process (online/offline signal).
-        CPU and RAM are summed across ALL arma3* processes (server + HCs).
-        """
-        profile_dir = f"{config.SCRIPTS_PATH.rstrip('\\')}\\profiles\\{profile}"
-        ps = (
-            "$ProgressPreference = 'SilentlyContinue'; "
-            f"$expectedPid = {pid}; "
-            f"$profileDir = {_ps_quote(profile_dir)}; "
-            f"$port = {port}; "
-            "$escapedProfileDir = [WildcardPattern]::Escape($profileDir); "
-            "$main = Get-Process -Id $expectedPid -ErrorAction SilentlyContinue; "
-            "if ($main -and $main.ProcessName -notlike 'arma3server*') { $main = $null } "
-            "if (-not $main) { "
-            "  $allArmaServer = @(Get-CimInstance Win32_Process -Filter \"Name LIKE 'arma3server%'\" -EA SilentlyContinue); "
-            "  $serverCandidates = @($allArmaServer | Where-Object { "
-            "    $cmd = if ($_.CommandLine) { $_.CommandLine } else { '' }; "
-            "    $isHeadlessClient = $cmd -match '(^|\\s)-client(\\s|$)'; "
-            "    -not $isHeadlessClient -and "
-            "    ("
-            "      $_.Name -like 'arma3serverprofiling*' -or "
-            "      $cmd -like \"*$escapedProfileDir*\" -or "
-            "      $cmd -like \"*-port=$port*\""
-            "    )"
-            "  }); "
-            "  $mainCandidate = @($serverCandidates "
-            "    | Sort-Object @{Expression={ if ($_.Name -like 'arma3serverprofiling*') { 0 } else { 1 } }}, CreationDate "
-            "    | Select-Object -First 1); "
-            "  if ($mainCandidate) { "
-            "    $main = Get-Process -Id ([int]$mainCandidate[0].ProcessId) -ErrorAction SilentlyContinue; "
-            "  } "
-            "} "
-            "if (-not $main) { 'stopped'; exit } "
-            "$up = [math]::Floor(((Get-Date) - $main.StartTime).TotalSeconds); "
-            "$mainPid = $main.Id; "
-            "$cores = (Get-CimInstance Win32_ComputerSystem -EA SilentlyContinue).NumberOfLogicalProcessors; "
-            "if (-not $cores) { $cores = 1 } "
-            "$all1 = @(Get-Process -Name 'arma3*' -EA SilentlyContinue); "
-            "$snap1 = ($all1 | Measure-Object CPU -Sum).Sum; "
-            "if ($null -eq $snap1) { $snap1 = 0 } "
-            "Start-Sleep -Milliseconds 1000; "
-            "$all = @(Get-Process -Name 'arma3*' -ErrorAction SilentlyContinue); "
-            "$snap2 = ($all | Measure-Object CPU -Sum).Sum; "
-            "if ($null -eq $snap2) { $snap2 = $snap1 } "
-            "$cpuPct = [math]::Round([math]::Max(0, ($snap2 - $snap1)) / (1.0 * [math]::Max($cores,1)) * 100, 1); "
-            "$totalRam = [math]::Round(($all | Measure-Object WorkingSet64 -Sum).Sum / 1MB, 0); "
-            "if ($null -eq $totalRam) { $totalRam = 0 } "
-            "$cnt = $all.Count; "
-            "\"ok|$mainPid|$cpuPct|$totalRam|$up|$cnt|$cores\""
-        )
-        code, out = await ssh_helper.run_ps_command(ps)
-        for line in out.splitlines():
-            line = line.strip()
-            if line == "stopped":
-                return None
-            if re.match(r"^ok\|\d+\|-?[\d.]+\|\d+\|\d+\|\d+\|\d+$", line):
-                parts = line.split("|")
-                try:
-                    return {
-                        "pid":        int(parts[1]),
-                        "cpu_pct":    float(parts[2]),
-                        "ram_mb":     int(parts[3]),
-                        "uptime_s":   int(parts[4]),
-                        "proc_count": int(parts[5]),
-                        "cores":      int(parts[6]),
-                    }
-                except ValueError:
-                    return None
-        logger.warning("Could not parse live-status process stats (exit=%s): %r", code, out)
-        return None
-
-    # ── internal: A2S query (run in thread — library is synchronous) ──────────
-
-    async def _get_a2s_info(self, host: str, query_port: int) -> tuple[dict | None, str | None]:
-        """Query Steam A2S and return the result plus a diagnostic error string."""
+    async def _profile_choices(self, interaction, current):
+        if not utils.has_any_access(interaction):
+            return []
+        action = interaction.command.name if interaction.command else "status"
         try:
-            info = await asyncio.to_thread(
-                a2s.info, (host, query_port), timeout=2.0
-            )
-            return (
-                {
-                    "players":     info.player_count,
-                    "max_players": info.max_players,
-                    "map":         info.map_name,
-                },
-                None,
-            )
-        except Exception as exc:
-            return None, f"{type(exc).__name__}: {exc}"
+            profiles = await asyncio.wait_for(self._get_catalog(), timeout=2)
+        except (TimeoutError, RuntimeError):
+            return []
+        return [app_commands.Choice(name=item["Profile"], value=item["Profile"])
+                for item in profiles if current.lower() in item["Profile"]
+                and utils.can_access(interaction, action, item["Profile"])][:25]
 
-    async def _get_rpt_mission(self, profile: str) -> str | None:
-        """Read the latest loaded mission from the main server RPT via SSH."""
-        profile_dir = f"{config.SCRIPTS_PATH.rstrip('\\')}\\profiles\\{profile}"
-        ps = (
-            "$ProgressPreference = 'SilentlyContinue'; "
-            f"$profileDir = {_ps_quote(profile_dir)}; "
-            "$rpt = @(Get-ChildItem -LiteralPath $profileDir -File -Filter 'arma3server*.rpt' "
-            "  -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending | Select-Object -First 1); "
-            "if (-not $rpt) { exit 0 } "
-            "$match = @(Get-Content -LiteralPath $rpt[0].FullName -Tail 10000 -ErrorAction SilentlyContinue | "
-            "  Select-String -Pattern '^\\d{1,2}:\\d{2}:\\d{2} Mission (.+?): Number of roles' | "
-            "  Select-Object -Last 1); "
-            "if ($match -and $match[0].Matches.Count -gt 0) { "
-            "  $mission = $match[0].Matches[0].Groups[1].Value.Trim(); "
-            "  $encoded = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($mission)); "
-            "  \"mission64|$encoded\" "
-            "}"
-        )
-        code, out = await ssh_helper.run_ps_command(ps)
-        if code != 0:
-            logger.debug("Could not read RPT mission for %s (exit=%d)", profile, code)
-            return None
+    async def _preset_choices(self, interaction, current):
+        profile = interaction.namespace.profile
+        if not utils.can_access(interaction, "preset", profile):
+            return []
+        try:
+            entries = await asyncio.wait_for(self._get_catalog(), timeout=2)
+        except (TimeoutError, RuntimeError):
+            return []
+        for item in entries:
+            if item["Profile"] == profile:
+                return [app_commands.Choice(name=name, value=name) for name in item["Presets"] if current.lower() in name][:25]
+        return []
 
-        for line in out.splitlines():
-            match = re.match(r"^mission64\|([A-Za-z0-9+/=]+)$", line.strip())
-            if not match:
-                continue
+    async def _embed(self, profile):
+        status = (await self._status(profile))[0]
+        running = status["Running"]
+        info = None
+        if running:
             try:
-                return base64.b64decode(match.group(1), validate=True).decode("utf-8")
-            except (binascii.Error, UnicodeDecodeError):
-                logger.debug("Could not decode RPT mission for %s", profile)
-                return None
-        return None
+                info = await asyncio.to_thread(a2s.info, (config.SERVER_HOST, status["Port"] + 1), timeout=2)
+            except Exception as exc:
+                log.debug("A2S unavailable for %s: %s", profile, exc)
+        label = "Online" if info else "Process running / query unavailable" if running else "Offline"
+        embed = discord.Embed(title=f"{profile} — {label}", color=discord.Color.green() if info else discord.Color.orange() if running else discord.Color.red())
+        embed.add_field(name="Preset", value=status["Preset"])
+        embed.add_field(name="Port", value=str(status["Port"]))
+        embed.add_field(name="Uptime", value=f"{status['UptimeSeconds'] // 3600}h {(status['UptimeSeconds'] % 3600) // 60}m")
+        embed.add_field(name="CPU", value=f"{status['CpuPercent']}%")
+        embed.add_field(name="RAM", value=f"{status['RamMB']} MB")
+        embed.add_field(name="Headless clients", value=str(status["HeadlessClients"]))
+        if info:
+            embed.add_field(name="Players", value=f"{info.player_count} / {info.max_players}")
+            embed.add_field(name="Map", value=info.map_name or "Unknown")
+        elif status.get("Mission"):
+            embed.add_field(name="Mission (RPT)", value=status["Mission"][:1024])
+        embed.set_footer(text="CPU/RAM include only this instance and its headless clients • refresh every 30s")
+        return embed
 
-    # ── internal: read PID + port from host after start ───────────────────────
-
-    async def _get_pid_and_port(self, profile: str) -> tuple[int, int] | None:
-        """SSH: read server.pid and Port from profile.json. Returns (pid, port)."""
-        base = config.SCRIPTS_PATH.replace("\\", "/")
-        ps = (
-            "$ProgressPreference = 'SilentlyContinue'; "
-            f"$serverPid = (Get-Content '{base}/profiles/{profile}/server.pid' "
-            f"  -ErrorAction SilentlyContinue | Select-Object -First 1).Trim(); "
-            f"$serverPort = (Get-Content '{base}/profiles/{profile}/profile.json' "
-            f"  | ConvertFrom-Json).Port; "
-            '"$serverPid|$serverPort"'
-        )
-        _, out = await ssh_helper.run_ps_command(ps)
-        # Strip CLIXML noise and grab only the first line that matches pid|port
-        for line in out.splitlines():
-            m = re.match(r"^(\d+)\|(\d+)$", line.strip())
-            if m:
-                return int(m.group(1)), int(m.group(2))
-        logger.warning("Could not parse pid/port from: %r", out)
-        return None
-
-    # ── internal: background live-status loop ─────────────────────────────────
-
-    async def _live_status_loop(
-        self,
-        channel: discord.abc.Messageable,
-        status_msg: discord.Message,
-        profile: str,
-        pid: int,
-        query_port: int,
-    ) -> None:
-        host        = config.SERVER_HOST
-        loop        = asyncio.get_event_loop()
-        started_at  = loop.time()
-        deadline    = started_at + _LIVE_MAX_RUNTIME * 3600
-        stopped     = False
-        miss_count  = 0
-        saw_running = False
-        last_a2s_info: dict | None = None
-        last_rpt_mission: str | None = None
-        a2s_miss_count = 0
-
-        try:
-            while loop.time() < deadline:
-                proc = await self._get_proc_stats(profile, pid, query_port - 1)
-                fresh_a2s_info, a2s_error = (
-                    await self._get_a2s_info(host, query_port) if proc else (None, None)
-                )
-
-                if proc and fresh_a2s_info:
-                    last_a2s_info = fresh_a2s_info
-                    a2s_miss_count = 0
-                elif proc:
-                    a2s_miss_count += 1
-                    refresh_rpt_mission = a2s_miss_count == 1 or a2s_miss_count % 10 == 0
-                    if refresh_rpt_mission:
-                        rpt_mission = await self._get_rpt_mission(profile)
-                        if rpt_mission:
-                            last_rpt_mission = rpt_mission
-                        if last_rpt_mission:
-                            fallback_status = "using mission from RPT"
-                        elif last_a2s_info:
-                            fallback_status = "keeping last known values"
-                        else:
-                            fallback_status = "no query values received yet"
-                        logger.warning(
-                            "A2S query unavailable for %s on %s:%d (miss=%d, error=%s); %s",
-                            profile,
-                            host,
-                            query_port,
-                            a2s_miss_count,
-                            a2s_error or "unknown",
-                            fallback_status,
-                        )
-
-                a2s_info = fresh_a2s_info or last_a2s_info
-                a2s_stale = fresh_a2s_info is None and last_a2s_info is not None
-                mission_override = last_rpt_mission if fresh_a2s_info is None else None
-
-                if proc is None:
-                    miss_count += 1
-                    elapsed = loop.time() - started_at
-                    still_starting = not saw_running and elapsed < _LIVE_START_GRACE
-                    transient_miss = saw_running and miss_count < _LIVE_MISS_LIMIT
-
-                    if still_starting or transient_miss:
-                        logger.info(
-                            "Live-status process miss for %s (miss=%d, elapsed=%ds, saw_running=%s)",
-                            profile,
-                            miss_count,
-                            int(elapsed),
-                            saw_running,
-                        )
-                        embed = _build_starting_embed(profile, pid, miss_count)
-                    else:
-                        embed = _build_live_embed(profile, None, None)
-                else:
-                    miss_count = 0
-                    saw_running = True
-                    embed = _build_live_embed(
-                        profile,
-                        proc,
-                        a2s_info,
-                        a2s_stale=a2s_stale,
-                        mission_override=mission_override,
-                    )
-
-                status_msg, keep_running = await self._edit_live_status_message(channel, status_msg, profile, embed)
-                if not keep_running:
+    async def _panel_loop(self, guild_id, profile, channel_id, message_id):
+        misses = 0
+        while True:
+            try:
+                channel = self.bot.get_channel(channel_id) or await self.bot.fetch_channel(channel_id)
+                if not getattr(channel, "guild", None) or channel.guild.id != guild_id:
                     return
+                message = channel.get_partial_message(message_id)
+                try:
+                    embed = await self._embed(profile)
+                    misses = 0
+                except Exception:
+                    misses += 1
+                    log.warning("Status query failed for %s (attempt %d)", profile, misses)
+                    embed = discord.Embed(title=f"{profile} — Status unavailable", description="The host could not be queried. This does not mean the game server is offline.", color=discord.Color.orange())
+                await message.edit(embed=embed)
+            except (discord.NotFound, discord.Forbidden):
+                self.bot.store.remove_panel(guild_id, profile)
+                return
+            except discord.HTTPException:
+                log.warning("Could not update status panel for %s", profile)
+            await asyncio.sleep(30)
 
-                if proc is None and not (not saw_running and (loop.time() - started_at) < _LIVE_START_GRACE):
-                    if saw_running and miss_count < _LIVE_MISS_LIMIT:
-                        await asyncio.sleep(10)
-                        continue
-                    stopped = True
-                    break
+    def _track_panel(self, guild, profile, channel, message):
+        key = (guild, profile)
+        old = self._tasks.pop(key, None)
+        if old:
+            old.cancel()
+        task = asyncio.create_task(self._panel_loop(guild, profile, channel, message))
+        self._tasks[key] = task
 
-                await asyncio.sleep(10 if proc is None else _LIVE_UPDATE_INTERVAL)
+        def discard(completed):
+            if self._tasks.get(key) is completed:
+                self._tasks.pop(key, None)
 
-        except asyncio.CancelledError:
-            # /server stop was called — update embed to offline
-            embed = _build_live_embed(profile, None, None)
-            await self._edit_live_status_message(channel, status_msg, profile, embed)
+        task.add_done_callback(discard)
+
+    async def _restore_panels(self):
+        await self.bot.wait_until_ready()
+        for guild, profile, channel, message in self.bot.store.panels():
+            guild_id = int(guild)
+            if guild_id not in config.GUILD_IDS:
+                continue
+            if config.ACCESS_POLICY and profile not in config.ACCESS_POLICY.guilds[guild_id]:
+                continue
+            self._track_panel(guild_id, profile, int(channel), int(message))
+
+    async def _ensure_panel(self, interaction, profile):
+        if (interaction.guild_id, profile) in self._tasks:
             return
+        message = await interaction.channel.send(embed=await self._embed(profile))
+        self.bot.store.save_panel(interaction.guild_id, profile, message.channel.id, message.id)
+        self._track_panel(interaction.guild_id, profile, message.channel.id, message.id)
 
-        finally:
-            self._live_tasks.pop(profile, None)
-
-        if not stopped:
-            # Safety-cap reached
-            embed = _build_live_embed(profile, None, None)
-            await self._edit_live_status_message(channel, status_msg, profile, embed)
-
-    # ── /server start ─────────────────────────────────────────────────────────
-
-    @server.command(name="start", description="Start the server for a profile")
-    @app_commands.describe(profile="Profile name (e.g. main, star_wars)")
-    async def server_start(self, interaction: discord.Interaction, profile: str) -> None:
-        if not utils.has_admin_auth(interaction):
-            return await _deny(interaction)
-
-        await interaction.response.defer(thinking=True)
-        logger.info("server start requested by %s — profile: %s", interaction.user, profile)
-
-        code, out = await ssh_helper.run_ps_file("scripts/Start-Server.ps1", f"-Profile {profile}")
-        await _reply(interaction, "Start Server", code, out, profile)
-
-        if code != 0:
+    @server.command(name="list", description="List instances assigned to you")
+    async def server_list(self, interaction: discord.Interaction):
+        if not utils.has_any_access(interaction):
+            await interaction.response.send_message("No instances are assigned to you.", ephemeral=True)
             return
+        await interaction.response.defer(ephemeral=True)
+        try:
+            entries = await self._status()
+            visible = [item for item in entries if utils.can_access(interaction, "list", item["Profile"])]
+            lines = [f"`{item['Profile']}` — {'running' if item['Running'] else 'stopped'} — preset `{item['Preset']}`" for item in visible]
+            await interaction.edit_original_response(content="\n".join(lines)[:1900] or "No instances are assigned to you.")
+        except RuntimeError:
+            await interaction.edit_original_response(content="Host status is unavailable.")
 
-        # Cancel any previous live-status task for this profile
-        if profile in self._live_tasks:
-            self._live_tasks[profile].cancel()
-
-        # Brief pause to let the PID file be written
-        await asyncio.sleep(2)
-
-        info = await self._get_pid_and_port(profile)
-        if info is None:
-            logger.warning("Could not start live-status for %s (no PID/port)", profile)
+    @server.command(name="start", description="Start an assigned instance")
+    @app_commands.autocomplete(profile=_profile_choices)
+    async def server_start(self, interaction: discord.Interaction, profile: str):
+        if not await utils.require_access(interaction, "start", profile):
             return
+        code = await self.bot.jobs.run(interaction, "start", profile, "scripts/Start-Server.ps1", Profile=profile)
+        if code == 0:
+            with contextlib.suppress(discord.HTTPException, RuntimeError):
+                await self._ensure_panel(interaction, profile)
 
-        pid, port   = info
-        query_port  = port + 1
+    @server.command(name="stop", description="Stop only the selected instance and its headless clients")
+    @app_commands.autocomplete(profile=_profile_choices)
+    async def server_stop(self, interaction: discord.Interaction, profile: str):
+        if await utils.require_access(interaction, "stop", profile):
+            await self.bot.jobs.run(interaction, "stop", profile, "scripts/Stop-Server.ps1", Profile=profile)
 
-        # Post the live-status embed as a normal bot message. Interaction follow-up
-        # messages are webhook-backed and their edit token expires.
-        init_embed = _build_starting_embed(profile, pid, 0)
+    @server.command(name="restart", description="Restart an assigned instance (ends the active game session)")
+    @app_commands.autocomplete(profile=_profile_choices)
+    async def server_restart(self, interaction: discord.Interaction, profile: str):
+        if await utils.require_access(interaction, "restart", profile):
+            await self.bot.jobs.run(interaction, "restart", profile, "scripts/Restart-Server.ps1", Profile=profile)
 
-        if interaction.channel is None:
-            logger.warning("Could not start live-status for %s (interaction has no channel)", profile)
+    @server.command(name="status", description="Show status for an assigned instance")
+    @app_commands.autocomplete(profile=_profile_choices)
+    async def server_status(self, interaction: discord.Interaction, profile: str):
+        if not await utils.require_access(interaction, "status", profile):
             return
+        await interaction.response.defer(ephemeral=True)
+        try:
+            await interaction.edit_original_response(embed=await self._embed(profile))
+        except RuntimeError:
+            await interaction.edit_original_response(content="Host status is unavailable; the server may still be running.")
 
-        status_msg = await interaction.channel.send(embed=init_embed)
+    @server.command(name="preset", description="Select an approved mod preset for a stopped instance")
+    @app_commands.autocomplete(profile=_profile_choices, preset=_preset_choices)
+    async def server_preset(self, interaction: discord.Interaction, profile: str, preset: str):
+        if await utils.require_access(interaction, "preset", profile):
+            await self.bot.jobs.run(interaction, "preset", profile, "scripts/Set-InstancePreset.ps1", Profile=profile, Preset=preset)
+            self._catalog_time = 0
 
-        # Launch background task
-        task = asyncio.create_task(
-            self._live_status_loop(interaction.channel, status_msg, profile, pid, query_port),
-            name=f"live-status-{profile}",
-        )
-        self._live_tasks[profile] = task
-        logger.info("Live-status task started for %s (PID %d, query port %d)", profile, pid, query_port)
-
-    # ── /server stop ──────────────────────────────────────────────────────────
-
-    @server.command(name="stop", description="Stop the server for a profile")
-    @app_commands.describe(profile="Profile name (e.g. main, star_wars)")
-    async def server_stop(self, interaction: discord.Interaction, profile: str) -> None:
+    @server.command(name="update", description="Owner: update the shared Arma installation while all instances are stopped")
+    async def server_update(self, interaction: discord.Interaction):
         if not utils.has_admin_auth(interaction):
-            return await _deny(interaction)
-
-        await interaction.response.defer(thinking=True)
-        logger.info("server stop requested by %s — profile: %s", interaction.user, profile)
-
-        code, out = await ssh_helper.run_ps_file("scripts/Stop-Server.ps1", f"-Profile {profile}")
-        await _reply(interaction, "Stop Server", code, out, profile)
-
-        # Signal live-status loop to update to offline
-        if profile in self._live_tasks:
-            self._live_tasks[profile].cancel()
-
-    # ── /server status ────────────────────────────────────────────────────────
-
-    @server.command(name="status", description="Show running Arma 3 processes")
-    async def server_status(self, interaction: discord.Interaction) -> None:
-        if not utils.has_admin_auth(interaction):
-            return await _deny(interaction)
-
-        await interaction.response.defer(thinking=True)
-        logger.info("server status requested by %s", interaction.user)
-
-        ps = (
-            "$ProgressPreference = 'SilentlyContinue'; "
-            "Get-Process arma3* -ErrorAction SilentlyContinue "
-            "| Select-Object Id,ProcessName,"
-            "@{N='CPU(s)';E={[math]::Round($_.CPU,1)}},"
-            "@{N='RAM(MB)';E={[math]::Round($_.WorkingSet64/1MB,0)}} "
-            "| Format-Table -AutoSize | Out-String"
-        )
-        code, out = await ssh_helper.run_ps_command(ps)
-
-        embed = discord.Embed(
-            title="Server Status",
-            color=discord.Color.blue(),
-            timestamp=datetime.now(timezone.utc),
-        )
-        out = out or "No Arma 3 processes running."
-        embed.add_field(name="Processes", value=f"```\n{out[:990]}\n```", inline=False)
-        await interaction.edit_original_response(embed=embed)
-
-    # ── /server update ────────────────────────────────────────────────────────
-
-    @server.command(name="update", description="Update the Arma 3 dedicated server")
-    async def server_update(self, interaction: discord.Interaction) -> None:
-        if not utils.has_admin_auth(interaction):
-            return await _deny(interaction)
-
-        await interaction.response.defer(thinking=True)
-        logger.info("server update requested by %s", interaction.user)
-
-        code, out = await ssh_helper.run_ps_file("setup/Update-Server.ps1")
-        await _reply(interaction, "Server Update", code, out)
+            await interaction.response.send_message("Only the hardware owner may update shared files.", ephemeral=True)
+            return
+        await self.bot.jobs.run(interaction, "update", "", "setup/Update-Server.ps1", owner_only=True)
 
 
-async def setup(bot: commands.Bot) -> None:
+async def setup(bot):
     await bot.add_cog(ServerCog(bot))

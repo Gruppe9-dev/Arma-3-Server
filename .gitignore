@@ -22,6 +22,14 @@ logs/auto-pull.log
 
 # Discord bot runtime logs
 bot/logs/
+bot/data/
+bot/ssh/
+config/access.json
+instances/
+.state/
+.venv/
+__pycache__/
+*.pyc
 
 # Windows
 Thumbs.db

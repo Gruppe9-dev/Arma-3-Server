@@ -5,6 +5,7 @@ Every other module imports from here instead of reading os.environ directly.
 
 import os
 from dotenv import load_dotenv
+from access import AccessPolicy
 
 load_dotenv("/app/.env")
 
@@ -51,7 +52,7 @@ def _parse_bounded_int(env_var: str, default: int, minimum: int, maximum: int) -
 
 # ── Discord ────────────────────────────────────────────────────────────────────
 DISCORD_TOKEN    = os.environ["DISCORD_BOT_TOKEN"]
-GUILD_ID         = int(os.environ["DISCORD_GUILD_ID"])
+GUILD_ID         = int(os.getenv("DISCORD_GUILD_ID", "0")) if not os.getenv("BOT_ACCESS_CONFIG", "").strip() else 0
 # Comma-separated role IDs that are allowed to use bot commands
 # e.g. DISCORD_ADMIN_ROLE_IDS=123456789,987654321
 ADMIN_ROLE_IDS   = _parse_ids("DISCORD_ADMIN_ROLE_IDS")
@@ -60,11 +61,22 @@ ADMIN_ROLE_IDS   = _parse_ids("DISCORD_ADMIN_ROLE_IDS")
 # e.g. DISCORD_ADMIN_USER_IDS=242292116833697792
 ADMIN_USER_IDS   = _parse_ids("DISCORD_ADMIN_USER_IDS")
 
+# With no access file, existing admin settings apply only to the legacy guild.
+# A configured but missing/malformed access file is a startup error, never a fallback.
+ACCESS_CONFIG_PATH = os.getenv("BOT_ACCESS_CONFIG", "").strip()
+ACCESS_POLICY = AccessPolicy.load(ACCESS_CONFIG_PATH) if ACCESS_CONFIG_PATH else None
+GUILD_IDS = tuple(ACCESS_POLICY.guilds) if ACCESS_POLICY else (GUILD_ID,)
+if not ACCESS_POLICY and GUILD_ID <= 0:
+    raise ValueError("Set DISCORD_GUILD_ID or BOT_ACCESS_CONFIG")
+
 # ── SSH (container → Windows host) ────────────────────────────────────────────
 SSH_HOST         = os.getenv("BOT_SSH_HOST", "host.docker.internal")
 SSH_PORT         = int(os.getenv("BOT_SSH_PORT", "22"))
 SSH_USER         = os.environ["BOT_SSH_USER"]
 SSH_KEY_PATH     = os.getenv("BOT_SSH_KEY_PATH", "/app/ssh_key")
+SSH_KNOWN_HOSTS  = os.getenv("BOT_SSH_KNOWN_HOSTS", "/app/ssh/known_hosts")
+SSH_TIMEOUT_SECONDS = _parse_bounded_int("BOT_SSH_TIMEOUT_SECONDS", 14400, 30, 86400)
+DATA_PATH = os.getenv("BOT_DATA_PATH", "/app/data")
 
 # Absolute path to the framework repo on the Windows host
 # e.g. C:\#Arma Server\Framework\Arma-3-Server

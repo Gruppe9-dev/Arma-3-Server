@@ -105,6 +105,9 @@ $script:EnvKeyMap = @{
     SERVER_UPDATE_BRANCH   = 'ServerUpdateBranch'
     STEAM_USERNAME         = 'SteamUsername'
     STEAM_PASSWORD         = 'SteamPassword'
+    INSTANCE_DATA_PATH     = 'InstanceDataPath'
+    MAX_RUNNING_INSTANCES  = 'MaxRunningInstances'
+    MAX_TOTAL_HEADLESS_CLIENTS = 'MaxTotalHeadlessClients'
 }
 
 # ---------------------------------------------------------------------------
@@ -194,7 +197,8 @@ function Get-Profile {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)]
-        [string]$ProfileName
+        [string]$ProfileName,
+        [switch]$IgnorePreset
     )
 
     # Locate the profiles\ directory relative to this script
@@ -215,6 +219,9 @@ function Get-Profile {
         exit 1
     }
 
+    if ($ProfileName -cnotmatch '^[a-z0-9][a-z0-9_-]{0,63}$' -or $ProfileName -in @('_all', '_template')) {
+        throw 'Invalid profile ID. Use lowercase letters, digits, underscores, or hyphens.'
+    }
     $profileDir  = Join-Path $profilesDir $ProfileName
     $profileFile = Join-Path $profileDir  "profile.json"
 
@@ -233,6 +240,8 @@ function Get-Profile {
     $profile | Add-Member -NotePropertyName "LogDir"      -NotePropertyValue (Join-Path $profileDir "logs") -Force
     $profile | Add-Member -NotePropertyName "ServerCfg"   -NotePropertyValue (Join-Path $profileDir "server.cfg") -Force
     $profile | Add-Member -NotePropertyName "BasicCfg"    -NotePropertyValue (Join-Path $profileDir "basic.cfg")  -Force
+
+    Initialize-ProfilePaths -Profile $profile -ProfileId $ProfileName -IgnorePreset:$IgnorePreset
 
     return $profile
 }
@@ -636,8 +645,7 @@ function Build-ModString {
     $resolved = foreach ($mod in $Mods) {
         $modPath = Join-Path $ServerInstallPath $mod
         if (-not (Test-Path $modPath)) {
-            Write-Log "Mod folder not found: '$modPath'. Mod '$mod' will be skipped." "Warning"
-            continue
+            throw "Required mod is missing: '$modPath'. Sync the approved preset before starting."
         }
         $mod
     }
@@ -687,6 +695,14 @@ function Enter-FrameworkMaintenanceLock {
         return $null
     }
 
+    # An interrupted SSH operation can leave a native updater alive after its
+    # PowerShell lock owner exited. Never start or mutate files during that state.
+    if (@(Get-Process -Name 'steamcmd' -ErrorAction SilentlyContinue).Count -gt 0) {
+        $stream.Dispose()
+        Write-Log 'SteamCMD is still running; wait for it to finish before another operation.' 'Warning'
+        return $null
+    }
+
     try {
         $payload = [ordered]@{
             ProcessId = $PID
@@ -721,8 +737,8 @@ function Exit-FrameworkMaintenanceLock {
         $Lock.Dispose()
     }
 
-    $lockPath = Join-Path $Config.WorkshopStagingPath ".arma3-framework-maintenance.lock"
-    Remove-Item -LiteralPath $lockPath -Force -ErrorAction SilentlyContinue
+    # Keep the lock file: unlinking it after releasing the handle races with the
+    # next owner. Exclusivity comes from the open handle, not file existence.
 }
 
 function Wait-ServerReady {
@@ -791,3 +807,5 @@ function Get-AvailableProfiles {
     }
     return @()
 }
+
+. (Join-Path $PSScriptRoot 'Instances.ps1')

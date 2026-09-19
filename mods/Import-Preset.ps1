@@ -1,4 +1,4 @@
-#Requires -Version 5.1
+﻿#Requires -Version 5.1
 <#
 .SYNOPSIS
     Imports an Arma 3 Launcher HTML preset file into a server profile.
@@ -63,7 +63,7 @@ $ScriptRoot    = Split-Path -Parent $MyInvocation.MyCommand.Path
 $FrameworkRoot = Split-Path -Parent $ScriptRoot
 . (Join-Path $FrameworkRoot "scripts\Common.ps1")
 
-$RequiredServerMods = @("@grp9_stats_server")
+$RequiredServerMods = @()
 
 function Add-UniqueString {
     param(
@@ -104,7 +104,17 @@ if ($extension -notin @(".html", ".htm")) {
 # ---------------------------------------------------------------------------
 Write-Log "Parsing preset: $(Split-Path -Leaf $PresetFile)" "Info"
 
-[xml]$doc = Get-Content -Path $PresetFile -Raw -Encoding UTF8
+if ((Get-Item -LiteralPath $PresetFile).Length -gt 2MB) { throw 'Preset exceeds 2 MiB.' }
+$settings = [Xml.XmlReaderSettings]::new()
+$settings.DtdProcessing = [Xml.DtdProcessing]::Prohibit
+$settings.XmlResolver = $null
+$settings.MaxCharactersInDocument = 2MB
+$reader = [Xml.XmlReader]::Create([IO.Path]::GetFullPath($PresetFile), $settings)
+try {
+    $doc = [Xml.XmlDocument]::new()
+    $doc.XmlResolver = $null
+    $doc.Load($reader)
+} finally { $reader.Dispose() }
 
 # Find all <tr data-type="ModContainer"> elements
 $modRows = $doc.SelectNodes("//tr[@data-type='ModContainer']")
@@ -193,10 +203,19 @@ if ($WhatIfPreference) {
 # ---------------------------------------------------------------------------
 # Load target profile
 # ---------------------------------------------------------------------------
+$lock = Enter-FrameworkMaintenanceLock -Config (Get-FrameworkConfig) -Purpose "preset-import:$Profile"
+if (-not $lock) { throw 'Another framework operation is running.' }
+try {
 $prof        = Get-Profile -ProfileName $Profile
+if ($prof.SelectedPreset) { throw 'Select the default preset before importing a new base mod list.' }
+$RequiredServerMods = @((Get-OptionalValue $prof 'RequiredServerMods' @()))
 $profileFile = Join-Path $prof.ProfileDir "profile.json"
 
 $profileData = Get-Content $profileFile -Raw | ConvertFrom-Json
+$catalog = Get-SharedWorkshopCatalog
+foreach ($mod in $parsed) {
+    if ($catalog.ContainsKey([string]$mod.Id)) { $mod.FolderName = $catalog[[string]$mod.Id] }
+}
 
 # ---------------------------------------------------------------------------
 # Build updated WorkshopIds and Mods arrays
@@ -245,91 +264,11 @@ $newMods = @(Add-UniqueString `
     -Required @())
 
 # ---------------------------------------------------------------------------
-# Format profile.json in a clean, human-readable style:
-#   - scalar properties inline
-#   - string arrays (Mods/ServerMods/ExtraArgs) one entry per line
-#   - WorkshopIds as inline objects with column-aligned padding
-# ---------------------------------------------------------------------------
-function Format-ProfileJson {
-    param(
-        [PSCustomObject]$Data,
-        [object[]]$WorkshopIds,
-        [string[]]$Mods,
-        [string[]]$ServerMods,
-        [string[]]$ExtraArgs
-    )
-
-    $sb = [System.Text.StringBuilder]::new()
-    $nl = "`n"
-
-    $null = $sb.Append("{$nl")
-
-    # Scalar properties in a fixed, readable order
-    $scalarOrder = @('_comment','ProfileName','Port','Branch','MaxPlayers','FPSLimit','EnableAutoInit','HeadlessClientCount')
-    foreach ($key in $scalarOrder) {
-        if ($Data.PSObject.Properties.Name -notcontains $key) { continue }
-        $val = $Data.$key
-        if ($val -is [bool]) {
-            $v = if ($val) { 'true' } else { 'false' }
-            $null = $sb.Append("  `"$key`": $v,$nl")
-        } elseif ($val -is [int] -or $val -is [long] -or $val -is [double]) {
-            $null = $sb.Append("  `"$key`": $val,$nl")
-        } else {
-            $escaped = "$val" -replace '\\', '\\' -replace '"', '\"'
-            $null = $sb.Append("  `"$key`": `"$escaped`",$nl")
-        }
-    }
-
-    # Helper: write a string array property
-    $writeStringArray = {
-        param([string]$Name, [string[]]$Items, [bool]$TrailingComma = $true)
-        $comma = if ($TrailingComma) { ',' } else { '' }
-        if ($Items.Count -eq 0) {
-            $null = $sb.Append("  `"$Name`": []$comma$nl")
-        } else {
-            $null = $sb.Append("  `"$Name`": [$nl")
-            for ($i = 0; $i -lt $Items.Count; $i++) {
-                $c = if ($i -lt $Items.Count - 1) { ',' } else { '' }
-                $null = $sb.Append("    `"$($Items[$i])`"$c$nl")
-            }
-            $null = $sb.Append("  ]$comma$nl")
-        }
-    }
-
-    & $writeStringArray "Mods"       $Mods       $true
-    & $writeStringArray "ServerMods" $ServerMods $true
-    & $writeStringArray "ExtraArgs"  $ExtraArgs  $true
-
-    # WorkshopIds – inline objects with column-aligned spacing BETWEEN fields,
-    # never inside the string values (trailing spaces in paths break Copy-Item).
-    if ($WorkshopIds.Count -eq 0) {
-        $null = $sb.Append("  `"WorkshopIds`": []$nl")
-    } else {
-        $maxId  = ($WorkshopIds | ForEach-Object { "$($_.Id)".Length }         | Measure-Object -Maximum).Maximum
-        $maxFld = ($WorkshopIds | ForEach-Object { "$($_.FolderName)".Length } | Measure-Object -Maximum).Maximum
-
-        $null = $sb.Append("  `"WorkshopIds`": [$nl")
-        for ($i = 0; $i -lt $WorkshopIds.Count; $i++) {
-            $m        = $WorkshopIds[$i]
-            $c        = if ($i -lt $WorkshopIds.Count - 1) { ',' } else { '' }
-            $nameEsc  = "$($m._name)" -replace '\\', '\\' -replace '"', '\"'
-            # Padding goes AFTER the comma, not inside the string value
-            $idGap    = ' ' * ($maxId  - "$($m.Id)".Length  + 2)
-            $fldGap   = ' ' * ($maxFld - "$($m.FolderName)".Length + 2)
-            $null = $sb.Append("    { `"Id`": `"$($m.Id)`",$idGap`"FolderName`": `"$($m.FolderName)`",$fldGap`"_name`": `"$nameEsc`" }$c$nl")
-        }
-        $null = $sb.Append("  ]$nl")
-    }
-
-    $null = $sb.Append("}")
-    return $sb.ToString()
-}
-
-# ---------------------------------------------------------------------------
 # Write updated profile.json
 # ---------------------------------------------------------------------------
 $profileData | Add-Member -NotePropertyName "WorkshopIds" -NotePropertyValue $newWorkshopIds -Force
 $profileData | Add-Member -NotePropertyName "Mods"        -NotePropertyValue $newMods        -Force
+$null = Get-SharedWorkshopCatalog -AdditionalEntries $newWorkshopIds
 
 $existingServerMods = @()
 if ($profileData.PSObject.Properties.Name -contains "ServerMods") {
@@ -339,19 +278,12 @@ $existingServerMods = @(Add-UniqueString `
     -Items ([string[]]$existingServerMods) `
     -Required $RequiredServerMods)
 
-$existingExtraArgs = @()
-if ($profileData.PSObject.Properties.Name -contains "ExtraArgs") {
-    $existingExtraArgs = @($profileData.ExtraArgs | Where-Object { $_ })
-}
-
-$json = Format-ProfileJson `
-    -Data        $profileData `
-    -WorkshopIds $newWorkshopIds `
-    -Mods        ([string[]]$newMods) `
-    -ServerMods  ([string[]]$existingServerMods) `
-    -ExtraArgs   ([string[]]$existingExtraArgs)
-
-Set-Content -Path $profileFile -Value $json -Encoding UTF8 -NoNewline
+# Preserve all operator-owned metadata, including Isolated, Presets and limits.
+$profileData | Add-Member -NotePropertyName 'ServerMods' -NotePropertyValue $existingServerMods -Force
+    if (@(Get-InstanceProcesses $prof).Count -gt 0) { throw 'Stop this instance before changing its base preset.' }
+    $profileData | ConvertTo-Json -Depth 30 | Set-Content -LiteralPath "$profileFile.tmp" -Encoding UTF8
+    Move-Item -LiteralPath "$profileFile.tmp" -Destination $profileFile -Force
+} finally { Exit-FrameworkMaintenanceLock -Lock $lock -Config (Get-FrameworkConfig) }
 
 Write-Log "profile.json updated: $profileFile" "Success"
 Write-Log "  WorkshopIds : $($newWorkshopIds.Count) mods" "Info"
@@ -366,7 +298,8 @@ if ($SyncAfter) {
     Write-Log "" "Info"
     Write-Log "=== Starting Sync-Mods.ps1 -Profile $Profile ===" "Header"
     $syncScript = Join-Path $ScriptRoot "Sync-Mods.ps1"
-    & $syncScript -Profile $Profile
+    & powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $syncScript -Profile $Profile
+    if ($LASTEXITCODE -ne 0) { throw 'The preset was imported, but Workshop synchronization failed.' }
 }
 
 # ---------------------------------------------------------------------------

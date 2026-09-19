@@ -1,4 +1,4 @@
-#Requires -Version 5.1
+﻿#Requires -Version 5.1
 <#
 .SYNOPSIS
     Updates the Arma 3 Dedicated Server via SteamCMD. Supports branch switching.
@@ -53,6 +53,9 @@ if (-not (Test-Path $CommonScript)) {
 
 $Config = Get-FrameworkConfig
 
+$maintenanceLock = Enter-FrameworkMaintenanceLock -Config $Config -Purpose "server-update"
+if (-not $maintenanceLock) { throw 'Another framework operation is running.' }
+try {
 $branchMarkerPath = Join-Path $Config.ServerInstallPath ".arma3-server-branch"
 $validBranches = @("public", "profiling", "development")
 
@@ -84,7 +87,7 @@ if ($Branch) {
 # ---------------------------------------------------------------------------
 if ($StopFirst) {
     Write-Log "Stopping running Arma 3 server processes..." "Info"
-    $procs = Get-Process -Name "arma3server*" -ErrorAction SilentlyContinue
+    $procs = @(Get-Process -Name "arma3server*" -ErrorAction SilentlyContinue)
     if ($procs) {
         $procs | Stop-Process -Force
         Write-Log "Stopped $($procs.Count) process(es)." "Success"
@@ -97,6 +100,7 @@ if ($StopFirst) {
 # ---------------------------------------------------------------------------
 # Build SteamCMD arguments
 # ---------------------------------------------------------------------------
+Assert-ServersIdle
 $steamCmdExe = Join-Path $Config.SteamCMDPath "steamcmd.exe"
 if (-not (Test-Path $steamCmdExe)) {
     Write-Log "steamcmd.exe not found at '$steamCmdExe'." "Error"
@@ -191,3 +195,5 @@ foreach ($bin in $binaries) {
         Write-Log "  $bin  (version: $ver)" "Info"
     }
 }
+
+} finally { Exit-FrameworkMaintenanceLock -Lock $maintenanceLock -Config $Config }

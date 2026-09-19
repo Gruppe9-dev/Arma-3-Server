@@ -1,127 +1,32 @@
 #Requires -Version 5.1
-<#
-.SYNOPSIS
-    Starts a single Arma 3 Headless Client for the given profile.
-
-.DESCRIPTION
-    Launched automatically by Start-Server.ps1 but can also be called manually
-    to start an additional HC or restart a crashed one.
-
-.PARAMETER Profile
-    Profile name (folder under profiles\).
-
-.PARAMETER HCIndex
-    Numeric index for this HC instance (used for the profile name HC1, HC2, ...).
-    Default: 1.
-
-.PARAMETER ServerHost
-    IP address of the Arma 3 server to connect to. Default: 127.0.0.1.
-
-.PARAMETER PassThru
-    Return the started Process object (used by Start-Server.ps1).
-
-.EXAMPLE
-    .\Start-Headless.ps1 -Profile main
-    .\Start-Headless.ps1 -Profile main -HCIndex 2 -ServerHost 127.0.0.1
-#>
-
 [CmdletBinding()]
 param(
-    [Parameter(Mandatory)]
-    [string]$Profile,
-
-    [int]$HCIndex = 1,
-
-    [string]$ServerHost = "127.0.0.1",
-
+    [Parameter(Mandatory)][string]$Profile,
+    [ValidateRange(1,16)][int]$HCIndex = 1,
+    [ValidateSet('127.0.0.1','localhost')][string]$ServerHost = '127.0.0.1',
     [switch]$PassThru
 )
-
 Set-StrictMode -Version Latest
-$ErrorActionPreference = "Stop"
-
-# ---------------------------------------------------------------------------
-# Bootstrap
-# ---------------------------------------------------------------------------
-$ScriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
-. (Join-Path $ScriptRoot "Common.ps1")
-
-$Config = Get-FrameworkConfig
-$Prof   = Get-Profile -ProfileName $Profile
-
-$hcName = "HC$HCIndex"
-
-Write-Log "=== Headless Client ${HCIndex}: $Profile ===" "Header"
-Write-Log "Server    : $ServerHost`:$($Prof.Port)" "Info"
-Write-Log "HC Name   : $hcName" "Info"
-
-# ---------------------------------------------------------------------------
-# HC always uses the standard server binary (not profiling binary)
-# The profiling binary difference is server-side only
-# ---------------------------------------------------------------------------
-$binary = Join-Path $Config.ServerInstallPath "arma3server_x64.exe"
-if (-not (Test-Path $binary)) {
-    Write-Log "arma3server_x64.exe not found at '$binary'." "Error"
-    exit 1
-}
-
-# ---------------------------------------------------------------------------
-# Build mod string (HC must load the same mods as the server)
-# ---------------------------------------------------------------------------
-$modString = ""
-if ($Prof.PSObject.Properties.Name -contains "Mods" -and @($Prof.Mods).Count -gt 0) {
-    $modString = Build-ModString -Mods $Prof.Mods -ServerInstallPath $Config.ServerInstallPath
-}
-
-# ---------------------------------------------------------------------------
-# Read join password from server.cfg
-# ---------------------------------------------------------------------------
-$joinPassword = ""
-if (Test-Path $Prof.ServerCfg) {
-    $cfgContent = Get-Content $Prof.ServerCfg -Raw
-    if ($cfgContent -match 'password\s*=\s*"([^"]*)"') {
-        $joinPassword = $Matches[1]
+$ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot 'Common.ps1')
+$config = Get-FrameworkConfig
+$lock = Enter-FrameworkMaintenanceLock -Config $config -Purpose "headless:$Profile"
+if (-not $lock) { throw 'Another start, stop, or maintenance operation is running.' }
+try {
+    $prof = Get-Profile $Profile
+    $processes = @(Get-InstanceProcesses $prof)
+    $main = @($processes | Where-Object { '-client' -notin @(Get-ArmaCommandArguments $_.CommandLine) })
+    if ($main.Count -ne 1) { throw 'Exactly one server process must be running for this instance.' }
+    $headless = @($processes | Where-Object { '-client' -in @(Get-ArmaCommandArguments $_.CommandLine) })
+    if ($headless.Count -ge $prof.HeadlessClientCount -or $HCIndex -gt $prof.HeadlessClientCount) { throw 'The approved headless client count would be exceeded.' }
+    foreach ($process in $headless) {
+        if ("-name=HC$HCIndex" -in @(Get-ArmaCommandArguments $process.CommandLine)) { throw 'This headless client is already running.' }
     }
-}
-
-# ---------------------------------------------------------------------------
-# Build HC argument list
-# HC uses -client instead of acting as a server; NO -serverMod= allowed
-# ---------------------------------------------------------------------------
-$hcArgs = [System.Collections.Generic.List[string]]::new()
-
-$hcArgs.Add("-client")
-$hcArgs.Add("-connect=$ServerHost")
-$hcArgs.Add("-port=$($Prof.Port)")
-$hcArgs.Add("-profiles=`"$($Prof.ProfileDir)`"")
-$hcArgs.Add("-name=$hcName")
-$hcArgs.Add("-nosound")
-$hcArgs.Add("-world=empty")
-
-if ($Prof.PSObject.Properties.Name -contains "FPSLimit" -and $Prof.FPSLimit -gt 0) {
-    $hcArgs.Add("-limitFPS=$($Prof.FPSLimit)")
-    Write-Log "FPS Limit : $($Prof.FPSLimit)" "Info"
-}
-
-if ($joinPassword) {
-    $hcArgs.Add("-password=`"$joinPassword`"")
-}
-
-if ($modString) {
-    $hcArgs.Add("-mod=`"$modString`"")
-}
-
-Write-Log "Command: $binary $($hcArgs -join ' ')" "Info"
-
-# ---------------------------------------------------------------------------
-# Start HC process
-# ---------------------------------------------------------------------------
-$hcPid = Start-DetachedProcess -FilePath $binary `
-                                -ArgumentList $hcArgs `
-                                -WorkingDirectory $Config.ServerInstallPath
-
-Write-Log "HC $HCIndex started (PID: $hcPid)" "Success"
-
-if ($PassThru) {
-    return $hcPid
-}
+    $total = @(Get-CimInstance Win32_Process -Filter "Name LIKE 'arma3server%'" | Where-Object {
+        '-client' -in @(Get-ArmaCommandArguments $_.CommandLine)
+    }).Count
+    if ($total -ge (Get-ConfiguredLimit $config 'MaxTotalHeadlessClients' 4)) { throw 'Headless client capacity exceeded.' }
+    $processId = Start-InstanceHeadless $prof $config $HCIndex
+    Write-Log "HC $HCIndex started for '$Profile' (PID: $processId)." 'Success'
+    if ($PassThru) { $processId }
+} finally { Exit-FrameworkMaintenanceLock -Lock $lock -Config $config }

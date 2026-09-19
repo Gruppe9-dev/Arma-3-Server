@@ -8,6 +8,12 @@ services:
       - ./.env:/app/.env:ro
       # SSH private key for host access (generate once with bot/setup-ssh-key.ps1)
       - ./bot/ssh_key:/app/ssh_key:ro
+      # Verified local host public key (setup/Export-SshHostKey.ps1)
+      - ./bot/ssh:/app/ssh:ro
+      # Access rules: copy config/access.example.json to config/access.json first
+      # and set BOT_ACCESS_CONFIG=/app/config/access.json to enable multiple guilds.
+      - ./config:/app/config:ro
+      - ./bot/data:/app/data
       # Persist bot logs on the host
       - ./bot/logs:/app/logs
     extra_hosts:

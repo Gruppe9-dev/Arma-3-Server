@@ -60,7 +60,7 @@ if (Get-LocalUser -Name $BotUser -ErrorAction SilentlyContinue) {
     $secure = ConvertTo-SecureString $randomPw -AsPlainText -Force
     New-LocalUser -Name $BotUser -Password $secure -PasswordNeverExpires -UserMayNotChangePassword `
         -Description "Arma 3 Discord Bot (key-only)" | Out-Null
-    Write-OK "User '$BotUser' created (password-login disabled via key-only SSH)."
+    Write-OK "User '$BotUser' created with a generated password; the bot uses its SSH key."
 }
 
 # ── 2. Generate SSH key pair ───────────────────────────────────────────────────
@@ -111,8 +111,17 @@ Write-OK "Permissions set on authorized_keys."
 # ── 4. NTFS permissions on the scripts directory ───────────────────────────────
 Write-Step "Granting '$BotUser' read+execute on '$ScriptsPath'"
 
-icacls $ScriptsPath /grant "${BotUser}:(OI)(CI)M" | Out-Null
-Write-OK "NTFS permissions granted (Modify)."
+icacls $ScriptsPath /grant:r "${BotUser}:(OI)(CI)RX" | Out-Null
+if ($LASTEXITCODE -ne 0) { throw 'Could not grant framework read/execute access.' }
+foreach ($folder in @('profiles','presets','.state')) {
+    $dataPath = Join-Path $ScriptsPath $folder
+    New-Item -ItemType Directory -Path $dataPath -Force | Out-Null
+    icacls $dataPath /grant:r "${BotUser}:(OI)(CI)M" | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw "Could not grant access to $folder." }
+}
+Write-OK 'Granted script read/execute and data write access. Review older inherited or explicit ACLs when upgrading.'
+Write-Warn 'Also grant the bot account Modify access to the shared game/Workshop directories for owner maintenance.'
+Write-Warn 'Run setup/Export-SshHostKey.ps1 on this host before starting the bot.'
 
 # ── Summary ────────────────────────────────────────────────────────────────────
 Write-Host ""

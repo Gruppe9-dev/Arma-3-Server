@@ -12,6 +12,8 @@ __pycache__/
 
 # Runtime logs (written inside the container to /app/logs/)
 logs/
+data/
+ssh/
 
 # Setup scripts — only needed on the host, not inside the container
 setup-ssh-key.ps1
