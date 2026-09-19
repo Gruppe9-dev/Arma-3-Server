@@ -18,6 +18,9 @@ function Remove-FixtureNode {
     Remove-Item -LiteralPath $absolute -Force
 }
 try {
+    # The bot account may use files but not the Storage CIM provider. Neither
+    # provisioning nor runtime preparation may depend on Get-Volume access.
+    function Get-Volume { throw 'Storage CIM access denied (fixture).' }
     foreach ($name in @('scripts','setup','mods')) { Copy-Item -LiteralPath (Join-Path $repo $name) -Destination $fixture -Recurse }
     New-Item -ItemType Directory -Path (Join-Path $fixture 'profiles') | Out-Null
     Copy-Item -LiteralPath (Join-Path $repo 'profiles\_template') -Destination (Join-Path $fixture 'profiles') -Recurse
@@ -45,6 +48,17 @@ try {
     $loadedEmpty=Get-Profile empty
     Assert-True ($loadedEmpty.Mods.Count -eq 0 -and $loadedEmpty.ServerMods.Count -eq 0) 'Loading the legacy profile did not normalize empty mod lists.'
     $prof=Get-Profile friend
+    Assert-True ((Get-PathFileSystem $prof.RuntimeProfileDir) -eq 'NTFS') 'The native filesystem query failed for the fixture volume.'
+    $volumeLink=Join-Path $fixture 'volume link #'
+    New-Item -ItemType Junction -Path $volumeLink -Target $repo | Out-Null
+    Assert-True ((Get-PathFileSystem (Join-Path $volumeLink 'profiles')) -eq (Get-PathFileSystem (Join-Path $repo 'profiles'))) 'The native filesystem query did not follow the junction target volume.'
+    $nativeVolumeQuery=${function:Get-PathFileSystem}
+    try {
+        function Get-PathFileSystem { param($Path) return 'ReFS' }
+        $volumeError=''
+        try { Prepare-InstanceRuntime $prof $config } catch { $volumeError=$_.Exception.Message }
+        Assert-True ($volumeError -like '*require an NTFS*') 'Runtime preparation accepted a non-NTFS volume.'
+    } finally { Set-Item Function:\Get-PathFileSystem $nativeVolumeQuery }
     Set-Content -LiteralPath (Join-Path $prof.MissionDir 'friend-only.Altis.pbo') -Value 'friend mission'
     Prepare-InstanceRuntime $prof $config
     $addonLink=Get-Item -LiteralPath (Join-Path $prof.GameDir 'addons') -Force

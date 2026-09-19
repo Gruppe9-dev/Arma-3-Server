@@ -74,7 +74,13 @@ def build_ps_invocation(rel_path: str, parameters: dict) -> str:
         f"$data = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('{payload}')) | ConvertFrom-Json; "
         "$parameters = @{}; foreach ($property in $data.PSObject.Properties) { $parameters[$property.Name] = $property.Value }; "
         f"try {{ $global:LASTEXITCODE = 0; & {literal} @parameters; $ok = $?; "
-        "if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; if (-not $ok) { exit 1 } } catch { Write-Error $_; exit 1 }"
+        "if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; if (-not $ok) { exit 1 } } catch { "
+        # Write-Error under ErrorActionPreference=Stop replaces the original
+        # error location with this wrapper. Report metadata without source text
+        # (which may contain credentials or other sensitive argument values).
+        "[Console]::Error.WriteLine(('Host operation failed: {0}' -f $_.Exception.Message)); "
+        "[Console]::Error.WriteLine(('At {0}:{1}' -f $_.InvocationInfo.ScriptName, $_.InvocationInfo.ScriptLineNumber)); "
+        "[Console]::Error.WriteLine(('Error ID: {0}' -f $_.FullyQualifiedErrorId)); exit 1 }"
     )
 
 
@@ -88,8 +94,16 @@ async def run_ps_command(ps_code: str) -> tuple[int, str]:
     Execute an inline PowerShell expression via -EncodedCommand.
     Avoids any shell-escaping issues with special characters.
     """
-    encoded = base64.b64encode(ps_code.encode("utf-16-le")).decode()
-    cmd     = f"powershell.exe -NoProfile -ExecutionPolicy Bypass -NonInteractive -EncodedCommand {encoded}"
+    # EncodedCommand can serialize redirected warning/information streams as
+    # CLIXML even with -OutputFormat Text. Convert each merged stream record to
+    # text before the console host serializes it; keep direct stderr and exits.
+    transport = (
+        "[Console]::OutputEncoding = [Text.UTF8Encoding]::new($false); "
+        "$ProgressPreference = 'SilentlyContinue'; & {\n" + ps_code +
+        "\n} *>&1 | ForEach-Object { [Console]::Out.WriteLine([string]$_) }"
+    )
+    encoded = base64.b64encode(transport.encode("utf-16-le")).decode()
+    cmd     = f"powershell.exe -NoProfile -ExecutionPolicy Bypass -NonInteractive -OutputFormat Text -EncodedCommand {encoded}"
     return await _exec(cmd)
 
 

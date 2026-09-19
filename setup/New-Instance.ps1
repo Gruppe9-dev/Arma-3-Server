@@ -47,7 +47,7 @@ try {
         if ($Port -le ([int]$other.Port + 4) -and ($Port + 4) -ge [int]$other.Port) { throw "Port block overlaps profile '$name'." }
     }
     New-Item -ItemType Directory -Path $dataRoot -Force | Out-Null
-    if ((Get-Volume -FilePath $dataRoot -ErrorAction Stop).FileSystem -ne 'NTFS') { throw 'INSTANCE_DATA_PATH must be on NTFS.' }
+    if ((Get-PathFileSystem $dataRoot) -ne 'NTFS') { throw 'INSTANCE_DATA_PATH must be on NTFS.' }
     if ($MigrateExisting) {
         $backupDir = Join-Path $root ".state\$Profile\migration"
         New-Item -ItemType Directory -Path $backupDir -Force | Out-Null

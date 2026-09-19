@@ -74,6 +74,17 @@ and SteamCMD data. `bot/setup-ssh-key.ps1` grants the framework portion for new
 setups. Review inherited/old explicit ACLs when upgrading an existing account.
 Never give SFTP users access to any of those control/maintenance locations.
 
+Instance filesystem checks use the [Windows volume API](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-getvolumepathnamew), including mounted-volume
+paths, rather than the Storage CIM provider. A bot account with the required file
+permissions does not need Storage CIM access for the NTFS check. If an older
+deployment fails at `Get-Volume` with `Cannot connect to CIM server. Access denied`,
+update `scripts/Instances.ps1` and `setup/New-Instance.ps1`. Other filesystem and
+process-access failures still require checking the specific operation and path.
+
+Host-operation failures are reported with the original script path, line number
+and error ID. Deploy changes to `bot/ssh_helper.py` with a bot image rebuild to
+receive plain-text output instead of PowerShell CLIXML in the bot logs.
+
 Pin the dedicated host's SSH identity, on that host:
 
 ```powershell

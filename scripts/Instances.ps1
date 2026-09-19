@@ -30,6 +30,45 @@ function Get-InstanceDataRoot {
     return $full
 }
 
+function Get-PathFileSystem {
+    param([Parameter(Mandatory)][string]$Path)
+    # Get-Volume uses the Storage CIM provider, which can deny the non-admin
+    # SSH account even when it has Modify access to the instance directory.
+    # Resolve the volume from the actual path, including mounted volumes.
+    if (-not ('Arma3.VolumeInfo' -as [type])) {
+        Add-Type -TypeDefinition @'
+using System;
+using System.ComponentModel;
+using System.Runtime.InteropServices;
+using System.Text;
+namespace Arma3 {
+    public static class VolumeInfo {
+        [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        static extern bool GetVolumePathName(string path, StringBuilder volumePath, uint length);
+        [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        static extern bool GetVolumeInformation(string root, StringBuilder name, uint nameSize,
+            out uint serial, out uint maxComponentLength, out uint flags,
+            StringBuilder fileSystem, uint fileSystemSize);
+        public static string GetFileSystem(string path) {
+            var root = new StringBuilder(32768);
+            if (!GetVolumePathName(path, root, (uint)root.Capacity))
+                throw new Win32Exception(Marshal.GetLastWin32Error());
+            uint serial, maxComponentLength, flags;
+            var fileSystem = new StringBuilder(256);
+            if (!GetVolumeInformation(root.ToString(), null, 0, out serial,
+                out maxComponentLength, out flags, fileSystem, (uint)fileSystem.Capacity))
+                throw new Win32Exception(Marshal.GetLastWin32Error());
+            return fileSystem.ToString();
+        }
+    }
+}
+'@
+    }
+    return [Arma3.VolumeInfo]::GetFileSystem([IO.Path]::GetFullPath($Path))
+}
+
 function Assert-ChildPath {
     param([string]$Path, [string]$Root)
     $full = [IO.Path]::GetFullPath($Path).TrimEnd('\')
@@ -253,8 +292,7 @@ function Prepare-InstanceRuntime {
     foreach ($path in @($Profile.GameDir, $Profile.RuntimeProfileDir, $Profile.RuntimeConfigDir, $Profile.StateDir)) {
         New-Item -ItemType Directory -Path $path -Force | Out-Null
     }
-    $drive = Get-Volume -FilePath $Profile.GameDir -ErrorAction Stop
-    if ($drive.FileSystem -ne 'NTFS') { throw 'Isolated runtime views require an NTFS instance data volume. Large shared game/mod data is not copied.' }
+    if ((Get-PathFileSystem $Profile.GameDir) -ne 'NTFS') { throw 'Isolated runtime views require an NTFS instance data volume. Large shared game/mod data is not copied.' }
     # Only immutable engine content is linked. Mutable game directories belong
     # to the instance, and SteamCMD never runs in this runtime view.
     $excluded = @('mpmissions','missions','userconfig','keys','battleye','profiles','logs','steamapps','steamcmd','!workshop')

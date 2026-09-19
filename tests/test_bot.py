@@ -107,6 +107,48 @@ class CommandTests(unittest.TestCase):
             self.assertEqual(ssh_helper._connection_params()["known_hosts"], config.SSH_KNOWN_HOSTS)
             self.assertIsNotNone(ssh_helper._connection_params()["known_hosts"])
 
+    @unittest.skipUnless(sys.platform == "win32", "PowerShell error reporting integration test")
+    def test_host_error_preserves_location_without_clixml_or_source_text(self):
+        with tempfile.TemporaryDirectory(prefix="arma-error-#-") as folder:
+            root = Path(folder) / "owner's framework"
+            script = root / "scripts" / "Start-Server.ps1"
+            script.parent.mkdir(parents=True)
+            script.write_text(
+                "param([string]$Profile)\n"
+                "Write-Host 'Preparing fixture'\n"
+                "Write-Warning 'Warning fixture \u00e4'\n"
+                "throw [UnauthorizedAccessException]::new('Access denied fixture') # PRIVATE_SOURCE_MARKER\n",
+                encoding="utf-8-sig",
+            )
+
+            async def execute_locally(command):
+                # The generated command consists of fixed flags and a base64
+                # payload. Exercise the same invocation used for SSH, no shell.
+                result = subprocess.run(command.split(), capture_output=True, text=True, encoding="utf-8", timeout=20)
+                return result.returncode, result.stdout + result.stderr
+
+            with patch.object(config, "SCRIPTS_PATH", str(root)), patch.object(ssh_helper, "_exec", side_effect=execute_locally):
+                code, output = asyncio.run(ssh_helper.run_ps_file("scripts/Start-Server.ps1", Profile="60th"))
+            self.assertEqual(code, 1, output)
+            self.assertIn("Preparing fixture", output)
+            self.assertIn("Warning fixture \u00e4", output)
+            self.assertIn("Host operation failed: Access denied fixture", output)
+            self.assertIn(f"At {script}:4", output)
+            self.assertIn("Error ID:", output)
+            for noise in ("CLIXML", "<Objs", "PRIVATE_SOURCE_MARKER", "FromBase64String", "WriteErrorException"):
+                self.assertNotIn(noise, output)
+
+    @unittest.skipUnless(sys.platform == "win32", "PowerShell output integration test")
+    def test_plain_output_preserves_json_and_native_exit_code(self):
+        async def execute_locally(command):
+            result = subprocess.run(command.split(), capture_output=True, text=True, encoding="utf-8", timeout=20)
+            return result.returncode, result.stdout + result.stderr
+
+        with patch.object(ssh_helper, "_exec", side_effect=execute_locally):
+            code, output = asyncio.run(ssh_helper.run_ps_command("Write-Output '{\"status\":\"fixture\"}'; exit 7"))
+        self.assertEqual(code, 7, output)
+        self.assertEqual(json.loads(output), {"status": "fixture"})
+
 
 class StoreTests(unittest.TestCase):
     def test_restart_records_uncertainty_without_replaying_jobs(self):
