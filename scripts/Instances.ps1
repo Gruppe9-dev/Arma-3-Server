@@ -3,7 +3,12 @@
 
 function Get-OptionalValue {
     param($Object, [string]$Name, $Default = $null)
-    if ($null -ne $Object -and $Object.PSObject.Properties.Name -contains $Name) { return $Object.$Name }
+    if ($null -ne $Object) {
+        $property = $Object.PSObject.Properties[$Name]
+        # Optional JSON fields can be present but null, including empty lists
+        # written by older importers. Keep explicit false and zero values.
+        if ($null -ne $property -and $null -ne $property.Value) { return $property.Value }
+    }
     return $Default
 }
 
@@ -108,8 +113,17 @@ function Assert-ProfileSettings {
         if ($value -lt $bound[1] -or $value -gt $bound[2]) { throw "$($bound[0]) is outside its allowed range." }
     }
     if ($Profile.Branch -notin @('public','profiling','development')) { throw 'Invalid server branch.' }
-    foreach ($mod in @((Get-OptionalValue $Profile 'Mods' @())) + @((Get-OptionalValue $Profile 'ServerMods' @()))) {
-        if ([string]$mod -notmatch '^@[\w.-]+$' -or $mod -match '\.\.') { throw "Invalid mod folder: $mod" }
+    $profileId = Get-OptionalValue $Profile 'ProfileId' (Get-OptionalValue $Profile 'ProfileName' '<unknown>')
+    foreach ($field in @('Mods', 'ServerMods')) {
+        $mods = @((Get-OptionalValue $Profile $field @()))
+        for ($index = 0; $index -lt $mods.Count; $index++) {
+            $mod = $mods[$index]
+            if ($mod -isnot [string] -or $mod -notmatch '^@[\w.-]+$' -or $mod -match '\.\.') {
+                throw "Invalid mod folder in profile '$profileId', ${field}[$index]: '$mod'. Expected a folder such as '@CBA_A3'; use [] for an empty mod list."
+            }
+        }
+        # Runtime preparation and launch code also read these properties directly.
+        Set-ObjectValue $Profile $field $mods
     }
     if ($Profile.Isolated -and @((Get-OptionalValue $Profile 'ExtraArgs' @())).Count -gt 0) {
         throw 'Isolated instances do not accept ExtraArgs. Use the supported profile settings.'

@@ -718,7 +718,9 @@ function Enter-FrameworkMaintenanceLock {
         throw
     }
 
-    Write-Output -NoEnumerate $stream
+    # FileStream is already scalar. -NoEnumerate wraps it in a List[object] on
+    # PowerShell 7, which cannot bind to Exit-FrameworkMaintenanceLock's parameter.
+    return $stream
 }
 
 function Exit-FrameworkMaintenanceLock {

@@ -27,9 +27,23 @@ try {
     Set-Content -LiteralPath (Join-Path $engine '.arma3-server-branch') -Value 'public'
     @("SERVER_INSTALL_PATH=$engine", "STEAMCMD_PATH=$fixture\steamcmd", "WORKSHOP_STAGING_PATH=$fixture\workshop", "INSTANCE_DATA_PATH=$fixture\instances") |
         Set-Content -LiteralPath (Join-Path $fixture '.env')
+    # Provisioning checks every existing profile for port conflicts. Null lists
+    # in an unrelated legacy profile must not prevent a new instance being made.
+    $emptyProfile=Join-Path $fixture 'profiles\empty'
+    Copy-Item -LiteralPath (Join-Path $fixture 'profiles\_template') -Destination $emptyProfile -Recurse
+    $emptyDefinitionPath=Join-Path $emptyProfile 'profile.json'
+    $emptyDefinition=Get-Content -LiteralPath $emptyDefinitionPath -Raw | ConvertFrom-Json
+    $emptyDefinition.Port=2602
+    $emptyDefinition.Mods=$null; $emptyDefinition.ServerMods=$null; $emptyDefinition.ExtraArgs=$null
+    $emptyDefinition | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath $emptyDefinitionPath
+    & (Join-Path $fixture 'setup\New-Instance.ps1') -Profile 60th -Port 2502
     & (Join-Path $fixture 'setup\New-Instance.ps1') -Profile friend -Port 2402
     . (Join-Path $fixture 'scripts\Common.ps1')
     $config=Get-FrameworkConfig
+    $newProfile=Get-Profile 60th
+    Assert-True ($newProfile.Port -eq 2502 -and $newProfile.Isolated -eq $true) 'An existing profile with null lists blocked instance provisioning.'
+    $loadedEmpty=Get-Profile empty
+    Assert-True ($loadedEmpty.Mods.Count -eq 0 -and $loadedEmpty.ServerMods.Count -eq 0) 'Loading the legacy profile did not normalize empty mod lists.'
     $prof=Get-Profile friend
     Set-Content -LiteralPath (Join-Path $prof.MissionDir 'friend-only.Altis.pbo') -Value 'friend mission'
     Prepare-InstanceRuntime $prof $config

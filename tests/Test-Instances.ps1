@@ -21,6 +21,38 @@ try {
     $other = $own.PSObject.Copy(); $other.CommandLine += ' -profiles="C:\Arma\friend\profiles"'
     Assert-True (-not (Test-InstanceProcess $other $profile)) 'Ambiguous profile flags were accepted.'
     Assert-ProfileSettings $profile
+    # Older JSON writers can serialize an empty optional list as null. Loading
+    # must normalize it before launch/runtime code consumes the properties.
+    foreach ($field in @('Mods', 'ServerMods')) {
+        foreach ($case in @(
+            @{ Json='{}'; Expected=@() },
+            @{ Json=('{"' + $field + '":null}'); Expected=@() },
+            @{ Json=('{"' + $field + '":[]}'); Expected=@() },
+            @{ Json=('{"' + $field + '":["@cba"]}'); Expected=@('@cba') },
+            @{ Json=('{"' + $field + '":["@cba","@ace"]}'); Expected=@('@cba','@ace') }
+        )) {
+            $candidate = $profile.PSObject.Copy()
+            $candidate.PSObject.Properties.Remove($field)
+            $data = $case.Json | ConvertFrom-Json
+            foreach ($property in $data.PSObject.Properties) { Set-ObjectValue $candidate $property.Name $property.Value }
+            Assert-ProfileSettings $candidate
+            Assert-True ($candidate.$field -is [array]) "$field was not normalized to an array for $($case.Json)."
+            Assert-True (($candidate.$field.Count -eq $case.Expected.Count) -and (($candidate.$field -join ';') -eq ($case.Expected -join ';'))) "$field changed the configured mod list for $($case.Json)."
+        }
+        foreach ($badJson in @('""', '[""]', '[null]', '["@cba"," "]', '["@cba","@../main"]')) {
+            $candidate = $profile.PSObject.Copy()
+            $data = ('{"' + $field + '":' + $badJson + '}') | ConvertFrom-Json
+            Set-ObjectValue $candidate $field $data.$field
+            $validationError = ''
+            try { Assert-ProfileSettings $candidate } catch { $validationError = $_.Exception.Message }
+            Assert-True ($validationError -match "profile 'friend'.*$field\[\d+\]") "Invalid $field entry was accepted or its error did not identify the profile and field: $badJson"
+        }
+    }
+    $candidate = $profile.PSObject.Copy(); $candidate.ExtraArgs=$null
+    Assert-ProfileSettings $candidate
+    Assert-True (@((Get-OptionalValue $candidate 'ExtraArgs' @())).Count -eq 0) 'Null ExtraArgs was treated as an argument.'
+    Assert-True ((Get-OptionalValue ([PSCustomObject]@{ Enabled=$false }) 'Enabled' $true) -eq $false) 'An explicit false value was replaced by the default.'
+    Assert-True ((Get-OptionalValue ([PSCustomObject]@{ Limit=0 }) 'Limit' 50) -eq 0) 'An explicit zero value was replaced by the default.'
     $invalid = $profile.PSObject.Copy(); $invalid.ExtraArgs=@('-profiles=C:\Arma\main')
     Assert-Throws { Assert-ProfileSettings $invalid } 'ExtraArgs escaped instance control.'
     $invalid = $profile.PSObject.Copy(); $invalid.Mods=@('..\main')
@@ -30,6 +62,7 @@ try {
     $config = [PSCustomObject]@{ WorkshopStagingPath=(Join-Path $fixture 'staging') }
     $first = Enter-FrameworkMaintenanceLock $config 'test-owner'
     Assert-True ($null -ne $first) 'First lock failed.'
+    Assert-True ($first -is [IO.FileStream]) 'The lock handle was wrapped in a collection and cannot be released.'
     $second = Enter-FrameworkMaintenanceLock $config 'competing-owner'
     Assert-True ($null -eq $second) 'Concurrent lock was incorrectly granted.'
     Exit-FrameworkMaintenanceLock $first $config
