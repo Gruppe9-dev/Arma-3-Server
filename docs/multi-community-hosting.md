@@ -83,7 +83,9 @@ process-access failures still require checking the specific operation and path.
 
 Process identification still uses `Win32_Process` in `root/cimv2`, and UDP port
 checks use `root/StandardCimv2`. Existing bot accounts that receive
-`HRESULT 0x80041003` from `Get-CimInstance` need local namespace read access.
+`HRESULT 0x80041003` from `Get-CimInstance` may lack namespace read or Remote Enable
+access. [OpenSSH network logons require Remote Enable for WMI queries](https://github.com/PowerShell/Win32-OpenSSH/issues/2077),
+even when the query targets the same host.
 Run this once in an **administrator PowerShell on the dedicated host**:
 
 ```powershell
@@ -91,12 +93,15 @@ Run this once in an **administrator PowerShell on the dedicated host**:
 ```
 
 New `bot/setup-ssh-key.ps1` runs include this step. The grant adds only
-[`WBEM_ENABLE` / Enable Account](https://learn.microsoft.com/en-us/windows/win32/wmisdk/namespace-access-rights-constants)
-on these two namespaces, without inheritance. It grants namespace reads, not a
-per-class permission, and adds no method-execution, write, remote-WMI or
-administrator rights. Existing permissions remain intact. Binary ACL backups
+[`WBEM_ENABLE` / Enable Account and `WBEM_REMOTE_ACCESS` / Remote Enable (0x21)](https://learn.microsoft.com/en-us/windows/win32/wmisdk/namespace-access-rights-constants)
+on these two namespaces, without inheritance. Rerun the updated script to upgrade
+an earlier Enable Account-only grant; it adds only missing rights. These are
+namespace permissions, not per-class permissions. Remote Enable allows existing
+namespace rights to be used through remote logons as well; it is not limited to
+SSH. The script adds no method-execution, write or administrator rights and changes
+no firewall rules or WinRM configuration. Existing permissions remain intact. Binary ACL backups
 are written to `.state/cim-permissions` before each change. Repeated runs leave
-an existing read grant unchanged; `-WhatIf` previews without writing.
+an existing complete grant unchanged; `-WhatIf` previews without writing.
 
 Verify from the same SSH identity used by the bot (this only counts processes
 and UDP endpoints; it does not start a server):

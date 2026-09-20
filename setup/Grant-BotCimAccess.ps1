@@ -5,10 +5,13 @@
 Grant the bot's existing local Windows account the namespace reads needed for
 process identification and UDP port checks. Run on the dedicated Windows host.
 .DESCRIPTION
-Adds WBEM_ENABLE only on root/cimv2 and root/StandardCimv2, without inheritance.
+Adds WBEM_ENABLE and WBEM_REMOTE_ACCESS (0x21) on root/cimv2 and
+root/StandardCimv2, without inheritance. SSH network logons require Remote Enable
+even for queries on the same host. Upgrades earlier WBEM_ENABLE-only grants.
 Existing ACEs are preserved. Each changed descriptor is backed up under
 .state/cim-permissions before writing. Supports -WhatIf and repeated execution.
-This does not add the account to Administrators or enable remote WMI access.
+Remote Enable permits existing namespace rights through remote logons too.
+This adds no administrator membership, method/write rights, or firewall rules.
 #>
 [CmdletBinding(SupportsShouldProcess)]
 param([ValidateNotNullOrEmpty()][string]$BotUser = 'arma_bot')

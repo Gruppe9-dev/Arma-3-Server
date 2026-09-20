@@ -123,7 +123,7 @@ foreach ($folder in @('profiles','presets','.state')) {
     if ($LASTEXITCODE -ne 0) { throw "Could not grant access to $folder." }
 }
 Write-OK 'Granted script read/execute and data write access. Review older inherited or explicit ACLs when upgrading.'
-Write-Step "Granting '$BotUser' local CIM read access for process and UDP checks"
+Write-Step "Granting '$BotUser' CIM read and Remote Enable access for process and UDP checks over SSH"
 & (Join-Path $ScriptsPath 'setup\Grant-BotCimAccess.ps1') -BotUser $BotUser
 Write-Warn 'Also grant the bot account Modify access to the shared game/Workshop directories for owner maintenance.'
 Write-Warn 'Run setup/Export-SshHostKey.ps1 on this host before starting the bot.'

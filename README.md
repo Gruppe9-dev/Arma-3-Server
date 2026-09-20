@@ -159,7 +159,8 @@ and pin the host's SSH key:
 ```
 
 For an existing bot account, run `setup/Grant-BotCimAccess.ps1 -BotUser arma_bot`
-once as administrator to grant local process/UDP namespace reads. This is included
+as administrator to grant process/UDP namespace reads and Remote Enable for SSH
+network logons. Rerun the updated script if you previously granted only local reads. This is included
 in new SSH setups; see [permission details](docs/multi-community-hosting.md).
 
 Set `DISCORD_BOT_TOKEN`, `BOT_SSH_USER`, `BOT_SCRIPTS_PATH` and the SSH/query

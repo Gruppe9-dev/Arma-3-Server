@@ -25,19 +25,36 @@ try {
     $updated = [Security.AccessControl.RawSecurityDescriptor]::new($change.Bytes, 0)
     $added = $updated.DiscretionaryAcl[2]
     Assert-True ($updated.DiscretionaryAcl.Count -eq 4 -and $added.SecurityIdentifier -eq $sid) 'The new ACE did not precede inherited ACEs.'
-    Assert-True ($added.AccessMask -eq 1 -and [int]$added.AceFlags -eq 0) 'The ACE grants more than local read access or inherits into other namespaces.'
+    Assert-True ($added.AccessMask -eq 0x21 -and [int]$added.AceFlags -eq 0) 'The ACE must grant only Enable Account and Remote Enable without inheritance.'
     $updated.DiscretionaryAcl.RemoveAce(2)
     $originalSecurity = [Security.AccessControl.RawSecurityDescriptor]::new($original, 0)
     Assert-True ($updated.GetSddlForm([Security.AccessControl.AccessControlSections]::All) -eq $originalSecurity.GetSddlForm([Security.AccessControl.AccessControlSections]::All)) 'Existing ACEs, ownership, group, or audit settings were changed.'
     Assert-True (-not (Add-CimNamespaceReadAce $change.Bytes $sid).Changed) 'Repeated setup would duplicate the ACE.'
 
+    # Production upgrade: the old installer already granted WBEM_ENABLE.
+    $readOnly = ConvertTo-DescriptorBytes "O:BAG:BAD:(A;;0x1;;;$sid)"
+    $upgrade = Add-CimNamespaceReadAce $readOnly $sid
+    Assert-True $upgrade.Changed 'An earlier local-read grant prevented the SSH upgrade.'
+    $upgraded = [Security.AccessControl.RawSecurityDescriptor]::new($upgrade.Bytes, 0)
+    Assert-True ($upgraded.DiscretionaryAcl.Count -eq 2 -and $upgraded.DiscretionaryAcl[0].AccessMask -eq 1 -and $upgraded.DiscretionaryAcl[1].AccessMask -eq 0x20) 'Upgrade must preserve the read ACE and add only Remote Enable.'
+    Assert-True (-not (Add-CimNamespaceReadAce $upgrade.Bytes $sid).Changed) 'Separate read and Remote Enable ACEs were not combined for idempotence.'
+    $remoteOnly = ConvertTo-DescriptorBytes "O:BAG:BAD:(A;;0x20;;;$sid)"
+    $readUpgrade = Add-CimNamespaceReadAce $remoteOnly $sid
+    $readUpgraded = [Security.AccessControl.RawSecurityDescriptor]::new($readUpgrade.Bytes, 0)
+    Assert-True ($readUpgrade.Changed -and $readUpgraded.DiscretionaryAcl[1].AccessMask -eq 1) 'Existing Remote Enable must require only the missing read right.'
+
     $denied = ConvertTo-DescriptorBytes "O:BAG:BAD:(D;;0x1;;;$sid)(A;;0x1;;;$sid)"
     Assert-Throws { Add-CimNamespaceReadAce $denied $sid } 'An existing deny ACE was overridden.'
-    $inheritOnly = ConvertTo-DescriptorBytes "O:BAG:BAD:(A;CIIO;0x1;;;$sid)"
+    $remoteDenied = ConvertTo-DescriptorBytes "O:BAG:BAD:(D;;0x20;;;$sid)(A;;0x21;;;$sid)"
+    Assert-Throws { Add-CimNamespaceReadAce $remoteDenied $sid } 'An existing Remote Enable deny ACE was overridden.'
+    $inheritOnly = ConvertTo-DescriptorBytes "O:BAG:BAD:(A;CIIO;0x21;;;$sid)"
     Assert-True (Add-CimNamespaceReadAce $inheritOnly $sid).Changed 'An inherit-only ACE was mistaken for local permission.'
     $missing = ConvertTo-DescriptorBytes 'O:BAG:BA'
     Assert-Throws { Add-CimNamespaceReadAce $missing $sid } 'A missing DACL was replaced.'
 
+    # Exercise the complete installer with existing production read-only grants.
+    $original = $readOnly
+    $originalEncoded = [Convert]::ToBase64String($original)
     $script:descriptors = @{ 'root/cimv2'=$original; 'root/StandardCimv2'=$original }
     $script:writes = 0
     $script:failRead = ''

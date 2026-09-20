@@ -4,22 +4,28 @@ function Add-CimNamespaceReadAce {
     param([byte[]]$Descriptor, [Security.Principal.SecurityIdentifier]$AccountSid)
     $security = [Security.AccessControl.RawSecurityDescriptor]::new($Descriptor, 0)
     if ($null -eq $security.DiscretionaryAcl) { throw 'Refusing to replace a missing namespace DACL.' }
-    $alreadyAllowed = $false
+    # SSH creates a network logon; WMI requires Remote Enable even for a
+    # query against the same host. WBEM_ENABLE | WBEM_REMOTE_ACCESS = 0x21.
+    $requiredMask = 0x21
+    $allowedMask = 0
     foreach ($ace in $security.DiscretionaryAcl) {
         if ($ace -isnot [Security.AccessControl.CommonAce] -or $ace.SecurityIdentifier -ne $AccountSid -or
-            ([int]$ace.AceFlags -band [int][Security.AccessControl.AceFlags]::InheritOnly) -or -not ($ace.AccessMask -band 1)) { continue }
+            ([int]$ace.AceFlags -band [int][Security.AccessControl.AceFlags]::InheritOnly) -or -not ($ace.AccessMask -band $requiredMask)) { continue }
         if ($ace.AceQualifier -eq [Security.AccessControl.AceQualifier]::AccessDenied) {
-            throw 'An existing namespace ACE denies this account read access. Review the deny policy explicitly.'
+            throw 'An existing namespace ACE denies this account read or Remote Enable access. Review the deny policy explicitly.'
         }
-        if ($ace.AceQualifier -eq [Security.AccessControl.AceQualifier]::AccessAllowed) { $alreadyAllowed = $true }
+        if ($ace.AceQualifier -eq [Security.AccessControl.AceQualifier]::AccessAllowed -and -not $ace.IsCallback) {
+            $allowedMask = $allowedMask -bor $ace.AccessMask
+        }
     }
-    if ($alreadyAllowed) { return [PSCustomObject]@{ Changed=$false; Bytes=$Descriptor } }
+    $missingMask = $requiredMask -band (-bnot $allowedMask)
+    if ($missingMask -eq 0) { return [PSCustomObject]@{ Changed=$false; Bytes=$Descriptor } }
 
-    # WBEM_ENABLE (Enable Account) only: local namespace reads. No method
-    # execution, write, remote access, ACL editing, or child-namespace inheritance.
+    # Add only missing rights, including upgrades from the earlier read-only
+    # grant. No new method/write/ACL-edit rights or child-namespace inheritance.
     $newAce = [Security.AccessControl.CommonAce]::new(
         [Security.AccessControl.AceFlags]::None, [Security.AccessControl.AceQualifier]::AccessAllowed,
-        1, $AccountSid, $false, $null)
+        $missingMask, $AccountSid, $false, $null)
     $index = 0
     while ($index -lt $security.DiscretionaryAcl.Count -and -not $security.DiscretionaryAcl[$index].IsInherited) { $index++ }
     $security.DiscretionaryAcl.InsertAce($index, $newAce)
@@ -45,8 +51,8 @@ function Grant-BotCimReadAccess {
     $backupRun = Join-Path $BackupDirectory ((Get-Date -Format 'yyyyMMdd-HHmmss') + '-' + [Guid]::NewGuid().ToString('N'))
     foreach ($change in $changes) {
         $namespace = $change.Namespace
-        if (-not $change.Updated.Changed) { Write-Host "Read access already present for $AccountSid on $namespace."; continue }
-        if (-not $PSCmdlet.ShouldProcess("$AccountSid on $namespace", 'Grant local WMI namespace read access (WBEM_ENABLE only)')) { continue }
+        if (-not $change.Updated.Changed) { Write-Host "Read and Remote Enable access already present for $AccountSid on $namespace."; continue }
+        if (-not $PSCmdlet.ShouldProcess("$AccountSid on $namespace", 'Grant WMI namespace Enable Account and Remote Enable for SSH queries (0x21)')) { continue }
         New-Item -ItemType Directory -Path $backupRun -Force | Out-Null
         $backup = Join-Path $backupRun ($namespace.Replace('/', '-') + '.bin')
         [IO.File]::WriteAllBytes($backup, [byte[]]$change.Original)
@@ -58,6 +64,6 @@ function Grant-BotCimReadAccess {
         if ($verified.ReturnValue -ne 0 -or (Add-CimNamespaceReadAce $verified.SD $AccountSid).Changed) {
             throw "Namespace ACL verification failed for '$namespace'. Backup: $backup"
         }
-        Write-Host "Granted local namespace read access to $AccountSid on $namespace."
+        Write-Host "Granted namespace read and Remote Enable access to $AccountSid on $namespace (required mask 0x21)."
     }
 }
