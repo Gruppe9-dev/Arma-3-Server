@@ -23,6 +23,7 @@ import config
 from jobs import JobRunner, JobStore
 import ssh_helper
 from cogs.automation import AutomationCog
+from presentation import status_embed
 
 
 def policy():
@@ -218,6 +219,25 @@ class JobTests(unittest.IsolatedAsyncioTestCase):
             await self.runner.run(interaction(2, 20), "start", "friend", "scripts/Start-Server.ps1", Profile="friend")
         self.assertEqual(self.store.db.execute("SELECT status FROM jobs").fetchone()[0], "unknown")
 
+    async def test_job_updates_one_embed_without_public_host_output(self):
+        for code, expected in [(0, "Completed"), (1, "Failed"), (255, "Outcome unknown")]:
+            request = interaction(2, 20)
+            with self.subTest(code=code), patch("utils.can_access", return_value=True), patch(
+                "ssh_helper.run_ps_file", return_value=(code, "PRIVATE_HOST_PATH_AND_SECRET")
+            ):
+                await self.runner.run(request, "start", "friend", "scripts/Start-Server.ps1", Profile="friend")
+            request.channel.send.assert_awaited_once()
+            queued = request.channel.send.call_args.kwargs["embed"]
+            self.assertIn("Queued", queued.fields[1].value)
+            edits = request.channel.send.return_value.edit.call_args_list
+            self.assertEqual(len(edits), 2)
+            self.assertIn("Running", edits[0].kwargs["embed"].fields[1].value)
+            self.assertIn(expected, edits[1].kwargs["embed"].fields[1].value)
+            for call in [request.channel.send.call_args, *edits]:
+                self.assertFalse(call.args)
+                self.assertNotIn("content", call.kwargs)
+                self.assertNotIn("PRIVATE_HOST", json.dumps(call.kwargs["embed"].to_dict()))
+
     async def test_discord_failure_does_not_erase_completed_host_result(self):
         request = interaction(2, 20)
         message = request.channel.send.return_value
@@ -270,6 +290,56 @@ class AutomationTests(unittest.IsolatedAsyncioTestCase):
             await self.cog._run_update_cycle()
         statuses = self.store.db.execute("SELECT status FROM jobs ORDER BY id").fetchall()
         self.assertEqual(statuses, [("interrupted",), ("completed",)])
+
+
+class PresentationTests(unittest.TestCase):
+    def test_status_keeps_rpt_mission_when_a2s_responds(self):
+        status = dict(Running=True, UptimeSeconds=3661, CpuPercent=12.3, RamMB=2048,
+                      PID=123, Processes=3, HeadlessClients=2, Preset="training", Port=2502,
+                      Mission="Operation Dagger")
+        info = types.SimpleNamespace(player_count=9, max_players=40, map_name="Altis")
+        embed = status_embed("60th", status, info)
+        fields = {field.name: field.value for field in embed.fields}
+        self.assertIn("Online", embed.title)
+        self.assertEqual(fields["🎯 Mission (RPT)"], "Operation Dagger")
+        self.assertEqual(fields["🗺️ Map"], "Altis")
+        self.assertEqual(fields["👥 Players"], "9 / 40")
+        self.assertEqual(fields["⚙️ Processes"], "3 total • 2 HC(s)")
+        self.assertEqual(fields["⏱️ Uptime"], "1h 01m")
+        missing = status_embed("60th", status)
+        self.assertNotIn("Offline", missing.title)
+        self.assertIn("Query Unavailable", missing.title)
+        status["Running"] = False
+        offline = status_embed("60th", status, info)
+        self.assertIn("Offline", offline.title)
+        self.assertNotIn("👥 Players", [field.name for field in offline.fields])
+
+    def test_host_text_cannot_overflow_or_format_embed_fields(self):
+        status = dict(Running=True, UptimeSeconds=0, CpuPercent=0, RamMB=0, PID=123,
+                      Processes=1, HeadlessClients=0, Preset="default", Port=2502,
+                      Mission="@everyone **mission** " + "x" * 5000)
+        embed = status_embed("60th", status)
+        mission = next(field.value for field in embed.fields if "Mission" in field.name)
+        self.assertNotIn("@everyone", mission)
+        self.assertIn(r"\*\*mission\*\*", mission)
+        self.assertLessEqual(len(mission), 1024)
+        self.assertLess(len(embed), 6000)
+
+    def test_update_diagnostic_survives_long_routine_log(self):
+        error = "[host] [ERR] Workshop item 3746219164 returned Steam result 9 (FileNotFound)."
+        output = "\n".join([error] + [f"[host] Current: @mod_{i}" for i in range(200)] +
+                           ["[host] === Sync Incomplete ===", "[host] AUTO_UPDATE_RESULT=failed"])
+        filtered = ssh_helper.filter_output(output, 10)
+        self.assertIn(error, filtered)
+        self.assertIn("AUTO_UPDATE_RESULT=failed", filtered)
+        self.assertLessEqual(len(filtered.splitlines()), 11)
+        self.assertNotIn("@mod_0\n", filtered)
+
+    def test_early_error_survives_many_nonroutine_lines(self):
+        filtered = ssh_helper.filter_output("\n".join(["[ERR] first failure"] +
+                    [f"Deployment detail {i}" for i in range(100)] + ["Final summary"]), 5)
+        self.assertIn("[ERR] first failure", filtered)
+        self.assertIn("Final summary", filtered)
 
 
 if __name__ == "__main__":

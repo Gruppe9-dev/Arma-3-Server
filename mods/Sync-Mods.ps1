@@ -167,7 +167,7 @@ function Get-WorkshopDetails {
         $detailsById[$id] = $item
     }
 
-    Write-Output -NoEnumerate $detailsById
+    return $detailsById
 }
 
 function Read-WorkshopState {
@@ -175,8 +175,7 @@ function Read-WorkshopState {
 
     $state = @{}
     if (-not (Test-Path -LiteralPath $Path)) {
-        Write-Output -NoEnumerate $state
-        return
+        return $state
     }
 
     try {
@@ -191,7 +190,7 @@ function Read-WorkshopState {
         $state = @{}
     }
 
-    Write-Output -NoEnumerate $state
+    return $state
 }
 
 function Read-UpdateExclusions {
@@ -199,8 +198,7 @@ function Read-UpdateExclusions {
 
     $exclusions = @{}
     if (-not (Test-Path -LiteralPath $Path)) {
-        Write-Output -NoEnumerate $exclusions
-        return
+        return $exclusions
     }
 
     try {
@@ -234,7 +232,7 @@ function Read-UpdateExclusions {
         $exclusions[$id] = $reason
     }
 
-    Write-Output -NoEnumerate $exclusions
+    return $exclusions
 }
 
 function Save-WorkshopState {
@@ -414,7 +412,8 @@ foreach ($mod in $modList) {
     $remote = $workshopDetails[$id]
     $steamResult = [int]$remote.result
     if ($steamResult -ne 1) {
-        Write-Log "Workshop item $id returned Steam result $steamResult. Add it to update-exclusions.json only when the installed version should remain pinned." "Error"
+        $resultName = if ($steamResult -eq 9) { 'FileNotFound' } else { 'metadata unavailable' }
+        Write-Log "Workshop item $id ($($mod.FolderName)) returned Steam result $steamResult ($resultName). This item could not be checked; other eligible mods will still be updated. Add it to update-exclusions.json only when the installed version should remain pinned." "Error"
         $failed++
         continue
     }
@@ -467,8 +466,18 @@ if ($CheckOnly) {
 
 if ($toDownload.Count -eq 0) {
     Write-Log "" "Info"
-    Write-Log "=== Sync Complete: everything is current ===" "Success"
-    if ($failed -gt 0) { exit 1 }
+    if ($failed -gt 0) {
+        Write-Log "=== Sync Incomplete: $failed item(s) could not be checked ===" "Error"
+        Write-Log "  Current : $current" "Info"
+        Write-Log "  Excluded: $excluded" "Info"
+        Write-Log "  Failed  : $failed" "Error"
+        exit 1
+    }
+    if ($excluded -gt 0) {
+        Write-Log "=== Sync Complete: $current current, $excluded explicitly excluded ===" "Warning"
+    } else {
+        Write-Log "=== Sync Complete: everything is current ===" "Success"
+    }
     exit 0
 }
 
@@ -579,7 +588,11 @@ try {
 # Summary
 # ---------------------------------------------------------------------------
 Write-Log "" "Info"
-Write-Log "=== Sync Complete ===" "Header"
+if ($operationFailed -or $failed -gt 0) {
+    Write-Log "=== Sync Incomplete: review errors below and above ===" "Error"
+} else {
+    Write-Log "=== Sync Complete ===" "Header"
+}
 Write-Log "  Deployed: $deployed" $(if ($deployed -gt 0) { "Success" } else { "Info" })
 Write-Log "  Current : $current" "Info"
 Write-Log "  Excluded: $excluded" $(if ($excluded -gt 0) { "Warning" } else { "Info" })

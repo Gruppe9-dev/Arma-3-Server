@@ -220,6 +220,7 @@ _SKIP_PATTERNS = [
 _KEEP_PATTERNS = [
     "warn",
     "error",
+    "[err]",
     "fail",
     "[ok]",
     "===",
@@ -241,10 +242,12 @@ def filter_output(text: str, max_lines: int = 30) -> str:
     Filter verbose PowerShell script output for Discord display.
 
     Drops repetitive noise (already-deployed notices, SteamCMD boilerplate).
-    Always keeps warnings, errors, summaries, and the last few lines.
+    Prioritizes diagnostics over routine output when the line budget is full.
     """
     if not text:
         return ""
+    if max_lines < 1:
+        raise ValueError("max_lines must be positive")
 
     lines = text.splitlines()
 
@@ -252,20 +255,23 @@ def filter_output(text: str, max_lines: int = 30) -> str:
         lower = line.lower()
         if any(p in lower for p in _KEEP_PATTERNS):
             return True
+        if re.search(r"(?:^|\]\s*)current:\s+@", lower):
+            return False
         if any(p in lower for p in _SKIP_PATTERNS):
             return False
         return True
 
-    filtered = [line for line in lines if _keep(line)]
-
-    # Always include the last 5 lines (summary / next-step hints)
-    tail = lines[-5:]
-    for line in tail:
-        if line not in filtered:
-            filtered.append(line)
-
-    # Hard cap — take the last max_lines if still too long
-    if len(filtered) > max_lines:
-        filtered = [f"… ({len(filtered) - max_lines} lines hidden) …"] + filtered[-max_lines:]
-
-    return "\n".join(filtered)
+    candidates = [i for i, line in enumerate(lines) if _keep(line) or i >= len(lines) - 5]
+    diagnostic = re.compile(r"\[err\]|\[warn\]|\bwarning\b|\berror\b|\bfailed\b|\bfailure\b|access denied", re.I)
+    critical = [i for i in candidates if diagnostic.search(lines[i])]
+    # Keep the first failure even when hundreds of later lines follow it.
+    selected = set(critical[:max_lines])
+    for index in reversed(candidates):
+        if len(selected) >= max_lines:
+            break
+        selected.add(index)
+    result = [lines[i] for i in sorted(selected)]
+    hidden = len(lines) - len(selected)
+    if hidden:
+        result.insert(0, f"… ({hidden} routine or excess lines omitted; diagnostics prioritized) …")
+    return "\n".join(result)

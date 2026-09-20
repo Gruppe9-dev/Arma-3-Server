@@ -196,12 +196,20 @@ Operators cannot modify host paths, arbitrary startup arguments, Workshop conten
 or another guild's instances. Status panels and operation history are persisted
 in `bot/data/jobs.sqlite3`. Jobs are serialized and permissions are checked again
 before execution. Interrupted jobs are recorded without automatic replay.
+Each operation uses one public embed, updated from queued to running to its final
+outcome; raw host output stays in private logs. Status panels show players, map,
+RPT mission, uptime, CPU/RAM, PID, processes/HCs, preset and port. A running process
+with an unavailable game query is shown separately from an offline server.
 
 Automatic updates are disabled by default. Set `BOT_AUTO_UPDATE_ENABLED=true`
 only when unattended Steam credentials and a maintenance policy are ready.
 The updater waits for an idle host, updates `SERVER_UPDATE_BRANCH`, then Workshop
 content. Each phase reacquires the shared lock and checks idleness. See
 `.env.example` for intervals and timeouts.
+Unavailable Workshop items remain update failures unless explicitly excluded by
+the owner. Other eligible mods are still processed; an incomplete run never
+reports that everything is current. Bot log summaries prioritize diagnostics
+and suppress repetitive `Current:` lines.
 
 ## SFTP and operations
 

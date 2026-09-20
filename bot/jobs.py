@@ -9,6 +9,7 @@ import discord
 
 import ssh_helper
 import utils
+from presentation import job_embed
 
 log = logging.getLogger(__name__)
 
@@ -99,7 +100,7 @@ class JobRunner:
             job_id = self.store.create(interaction.guild_id, interaction.user.id, profile, action)
             # Regular bot messages survive the 15-minute interaction token limit.
             message = await interaction.channel.send(
-                f"Job #{job_id}: `{action}` for `{profile or 'shared installation'}` is queued.",
+                embed=job_embed(job_id, action, profile, "queued"),
                 allowed_mentions=discord.AllowedMentions.none(),
             )
             await interaction.edit_original_response(content=f"Operation accepted: {message.jump_url}")
@@ -110,21 +111,19 @@ class JobRunner:
                 allowed = utils.has_admin_auth(interaction) if owner_only else utils.can_access(interaction, action, profile)
                 if not allowed:
                     self.store.mark(job_id, "denied", 1)
-                    await message.edit(content=f"Job #{job_id}: access was revoked before execution.")
+                    terminal = True
+                    await message.edit(embed=job_embed(job_id, action, profile, "denied"))
                     return 1
                 self.store.mark(job_id, "running")
-                await message.edit(content=f"Job #{job_id}: `{action}` for `{profile or 'shared installation'}` is running.")
+                await message.edit(embed=job_embed(job_id, action, profile, "running"))
                 code, output = await ssh_helper.run_ps_file(script, **parameters)
                 status = "completed" if code == 0 else "unknown" if code == 255 else "failed"
                 self.store.mark(job_id, status, code)
                 terminal = True
                 log.info("Job %s guild=%s user=%s profile=%s action=%s result=%s\n%s", job_id,
                          interaction.guild_id, interaction.user.id, profile, action, status, ssh_helper.filter_output(output, 80))
-                suffix = "" if code == 0 else " The owner can inspect the private bot/host logs."
-                if code == 255:
-                    suffix = " The host operation may still be running. Check status before retrying."
                 try:
-                    await message.edit(content=f"Job #{job_id}: `{action}` for `{profile or 'shared installation'}` — **{status}**.{suffix}")
+                    await message.edit(embed=job_embed(job_id, action, profile, status))
                 except discord.HTTPException:
                     log.warning("Could not publish final status for job %s; the recorded outcome is %s", job_id, status)
                 return code
@@ -138,7 +137,7 @@ class JobRunner:
                 self.store.mark(job_id, "interrupted")
             if message is not None:
                 try:
-                    await message.edit(content=f"Job #{job_id}: interrupted. Check server status before retrying.")
+                    await message.edit(embed=job_embed(job_id, action, profile, "interrupted"))
                 except discord.HTTPException:
                     pass
             return 1

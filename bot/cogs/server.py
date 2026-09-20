@@ -14,6 +14,7 @@ from discord.ext import commands
 import config
 import ssh_helper
 import utils
+from presentation import status_embed
 
 log = logging.getLogger(__name__)
 
@@ -94,21 +95,7 @@ class ServerCog(commands.Cog):
                 info = await asyncio.to_thread(a2s.info, (config.SERVER_HOST, status["Port"] + 1), timeout=2)
             except Exception as exc:
                 log.debug("A2S unavailable for %s: %s", profile, exc)
-        label = "Online" if info else "Process running / query unavailable" if running else "Offline"
-        embed = discord.Embed(title=f"{profile} — {label}", color=discord.Color.green() if info else discord.Color.orange() if running else discord.Color.red())
-        embed.add_field(name="Preset", value=status["Preset"])
-        embed.add_field(name="Port", value=str(status["Port"]))
-        embed.add_field(name="Uptime", value=f"{status['UptimeSeconds'] // 3600}h {(status['UptimeSeconds'] % 3600) // 60}m")
-        embed.add_field(name="CPU", value=f"{status['CpuPercent']}%")
-        embed.add_field(name="RAM", value=f"{status['RamMB']} MB")
-        embed.add_field(name="Headless clients", value=str(status["HeadlessClients"]))
-        if info:
-            embed.add_field(name="Players", value=f"{info.player_count} / {info.max_players}")
-            embed.add_field(name="Map", value=info.map_name or "Unknown")
-        elif status.get("Mission"):
-            embed.add_field(name="Mission (RPT)", value=status["Mission"][:1024])
-        embed.set_footer(text="CPU/RAM include only this instance and its headless clients • refresh every 30s")
-        return embed
+        return status_embed(profile, status, info)
 
     async def _panel_loop(self, guild_id, profile, channel_id, message_id):
         misses = 0
