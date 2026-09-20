@@ -222,7 +222,9 @@ and suppress repetitive `Current:` lines.
 ## SFTP and operations
 
 Use [`setup/Configure-InstanceSFTP.ps1`](setup/Configure-InstanceSFTP.ps1) for new
-per-person, per-instance SFTP accounts. The older `Configure-SFTP.ps1` targets
+instance SFTP accounts, using `-PublicKeyFile` or `-UsePassword` (hidden password
+prompt). Currently provision one SFTP account per instance, because the installer
+replaces its directory ACLs. The older `Configure-SFTP.ps1` targets
 the shared legacy mission folder and is unsuitable for community separation.
 The [hosting guide](docs/multi-community-hosting.md#restrict-sftp) explains keys,
 permissions, backups and acceptance checks.

@@ -179,8 +179,11 @@ as links; their targets contain shared game data.
 
 ## Restrict SFTP
 
-Use a **new account per person**, an ed25519 public key, and an elevated PowerShell
-on the dedicated host. Do not reuse the bot's SSH account or private key.
+Use a **new dedicated account** and an elevated PowerShell on the dedicated host.
+Choose either an ed25519 public key or password-only authentication. Do not reuse
+the bot's SSH account or private key. The current installer replaces the instance
+directory ACLs: provision only one SFTP account per instance until multi-account
+ACL management is implemented.
 
 ```powershell
 .\setup\Configure-InstanceSFTP.ps1 -Profile friend -SftpUser friend_sftp `
@@ -189,7 +192,25 @@ on the dedicated host. Do not reuse the bot's SSH account or private key.
     -PublicKeyFile C:\Setup\friend.pub -BotUser arma_bot
 ```
 
-The script creates a disabled account, prepares NTFS rights and a public-key-only
+For password-only access, use these commands instead:
+
+```powershell
+.\setup\Configure-InstanceSFTP.ps1 -Profile 60th -SftpUser sftp_60th -BotUser arma_bot -UsePassword -WhatIf
+.\setup\Configure-InstanceSFTP.ps1 -Profile 60th -SftpUser sftp_60th -BotUser arma_bot -UsePassword
+```
+
+The second command prompts for the password with hidden input; the preview does
+not prompt. No public key file is required. Windows account password policy still
+applies. In WinSCP, select SFTP, the host and SSH port, and the new username/password.
+For automation, `-Password` accepts a `SecureString` together with `-UsePassword`.
+Do not put a plaintext password in the command line or configuration files.
+
+Password mode applies `AuthenticationMethods password`, `PasswordAuthentication yes`,
+and `PubkeyAuthentication no` inside this user's `Match` block. Key mode retains
+public-key-only authentication. The selected mode is checked against the effective
+sshd configuration before the account is enabled; global login policy is preserved.
+
+The script creates a disabled account, prepares NTFS rights and an SFTP-only
 SFTP match block, validates syntax and effective account settings, backs up
 `sshd_config`, restarts SSH, and enables the account only after success. If that
 final step fails, it attempts to restore the previous configuration and leaves
@@ -198,7 +219,9 @@ while applying host SSH configuration. Existing accounts are not repurposed.
 
 The user sees `/mpmissions` and `/profile`. They cannot change trusted
 `profile.json`, instance ownership, ports, free startup parameters, process state,
-framework scripts or Discord/Steam credentials through this SFTP root.
+framework scripts or Discord/Steam credentials through this SFTP root. This
+confinement is the same for both authentication modes. Existing accounts are
+still rejected; `-UsePassword` does not convert an already provisioned key account.
 
 Upload complete `.pbo` missions (temporary upload extensions are not deployed).
 Use a stopped server/start or restart to deploy changes. Running servers keep
