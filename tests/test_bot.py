@@ -23,7 +23,8 @@ import config
 from jobs import JobRunner, JobStore
 import ssh_helper
 from cogs.automation import AutomationCog
-from presentation import status_embed
+from presentation import status_embed, parse_mod_summary, job_embed
+from cogs.server import ServerCog
 
 
 def policy():
@@ -238,6 +239,24 @@ class JobTests(unittest.IsolatedAsyncioTestCase):
                 self.assertNotIn("content", call.kwargs)
                 self.assertNotIn("PRIVATE_HOST", json.dumps(call.kwargs["embed"].to_dict()))
 
+    async def test_mod_job_publishes_counts_for_success_and_failure_but_not_timeout(self):
+        for code in (0, 1, 255):
+            request = interaction(2, 20)
+            data = dict(Mode="sync", Total=2, Current=0, Deployed=1, Pending=0, Excluded=0, Failed=1, NotProcessed=0)
+            if code == 0:
+                data.update(Deployed=2, Failed=0)
+            output = "private host details\nMOD_SYNC_RESULT=" + json.dumps(data)
+            with patch("utils.has_admin_auth", return_value=True), patch("ssh_helper.run_ps_file", return_value=(code, output)):
+                await self.runner.run(request, "mods-sync", "friend", "mods/Sync-Mods.ps1", owner_only=True, Profile="friend")
+            final = request.channel.send.return_value.edit.call_args.kwargs["embed"]
+            fields = {field.name: field.value for field in final.fields}
+            if code == 255:
+                self.assertNotIn("Failed", fields)
+            else:
+                self.assertEqual(fields["Installed successfully"], str(data["Deployed"]))
+                self.assertEqual(fields["Failed"], str(data["Failed"]))
+            self.assertNotIn("private host details", json.dumps(final.to_dict()))
+
     async def test_discord_failure_does_not_erase_completed_host_result(self):
         request = interaction(2, 20)
         message = request.channel.send.return_value
@@ -293,6 +312,20 @@ class AutomationTests(unittest.IsolatedAsyncioTestCase):
 
 
 class PresentationTests(unittest.TestCase):
+    def test_mod_summary_renders_only_valid_aggregate_counts(self):
+        data = dict(Mode="check", Total=75, Current=75, Deployed=0, Pending=0, Excluded=0, Failed=0, NotProcessed=0)
+        parsed = parse_mod_summary("private log\nMOD_SYNC_RESULT=" + json.dumps(data))
+        embed = job_embed(22, "mods-update", "60th", "completed", mod_summary=parsed)
+        fields = {field.name: field.value for field in embed.fields}
+        self.assertEqual(fields["Up to date"], "75")
+        self.assertEqual(fields["Updates available"], "0")
+        self.assertEqual(fields["Failed"], "0")
+        self.assertIn("No mods were changed", embed.description)
+        for invalid in (dict(data, Failed=-1), dict(data, Total=76), dict(data, Current=True), dict(data, Mode="<secret>")):
+            self.assertIsNone(parse_mod_summary("MOD_SYNC_RESULT=" + json.dumps(invalid)))
+        self.assertIsNone(parse_mod_summary("MOD_SYNC_RESULT=" + "x" * 3000))
+        self.assertIsNone(parse_mod_summary("old host has no marker"))
+
     def test_status_keeps_rpt_mission_when_a2s_responds(self):
         status = dict(Running=True, UptimeSeconds=3661, CpuPercent=12.3, RamMB=2048,
                       PID=123, Processes=3, HeadlessClients=2, Preset="training", Port=2502,
@@ -340,6 +373,59 @@ class PresentationTests(unittest.TestCase):
                     [f"Deployment detail {i}" for i in range(100)] + ["Final summary"]), 5)
         self.assertIn("[ERR] first failure", filtered)
         self.assertIn("Final summary", filtered)
+
+
+class PanelTests(unittest.IsolatedAsyncioTestCase):
+    async def asyncSetUp(self):
+        self.folder = tempfile.TemporaryDirectory()
+        self.store = JobStore(Path(self.folder.name) / "jobs.db")
+        self.message = types.SimpleNamespace(edit=AsyncMock())
+        self.channel = types.SimpleNamespace(guild=types.SimpleNamespace(id=10), get_partial_message=lambda _: self.message)
+        self.bot = types.SimpleNamespace(store=self.store, get_channel=lambda _: self.channel)
+        self.cog = ServerCog(self.bot)
+
+    async def asyncTearDown(self):
+        await self.cog.cog_unload()
+        self.store.db.close()
+        self.folder.cleanup()
+
+    async def test_confirmed_offline_updates_once_and_stops_polling(self):
+        self.store.save_panel(10, "main", 11, 12)
+        with patch.object(self.cog, "_snapshot", return_value=(discord.Embed(title="Offline"), False)) as snapshot, patch("cogs.server.asyncio.sleep", new_callable=AsyncMock) as sleep:
+            await self.cog._panel_loop(10, "main", 11, 12)
+        snapshot.assert_awaited_once_with("main")
+        self.message.edit.assert_awaited_once()
+        sleep.assert_not_awaited()
+        self.assertEqual(len(self.store.panels()), 1)
+
+    async def test_query_failure_is_not_treated_as_offline(self):
+        with patch.object(self.cog, "_snapshot", side_effect=[RuntimeError("unreachable"), (discord.Embed(title="Offline"), False)]) as snapshot, patch("cogs.server.asyncio.sleep", new_callable=AsyncMock) as sleep:
+            await self.cog._panel_loop(10, "main", 11, 12)
+        self.assertEqual(snapshot.await_count, 2)
+        sleep.assert_awaited_once_with(30)
+        self.assertIn("Status unavailable", self.message.edit.call_args_list[0].kwargs["embed"].title)
+
+    async def test_running_process_with_no_game_query_keeps_polling(self):
+        with patch.object(self.cog, "_snapshot", side_effect=[(discord.Embed(title="Query unavailable"), True), (discord.Embed(title="Offline"), False)]), patch("cogs.server.asyncio.sleep", new_callable=AsyncMock) as sleep:
+            await self.cog._panel_loop(10, "main", 11, 12)
+        sleep.assert_awaited_once_with(30)
+
+    async def test_start_posts_new_panel_and_refreshes_other_allowed_guilds(self):
+        self.store.save_panel(10, "main", 11, 12)
+        self.store.save_panel(20, "main", 21, 22)
+        self.store.save_panel(30, "main", 31, 32)
+        self.store.save_panel(10, "other", 41, 42)
+        request = interaction(1, 10)
+        request.channel.send.return_value.id = 99
+        request.channel.send.return_value.channel = types.SimpleNamespace(id=11)
+        with patch.object(config, "GUILD_IDS", (10, 20)), patch.object(config, "ACCESS_POLICY", None), patch.object(self.cog, "_track_panel") as track, patch.object(self.cog, "_embed", return_value=discord.Embed(title="Online")):
+            await self.cog._ensure_panel(request, "main")
+        request.channel.send.assert_awaited_once()
+        self.assertEqual(track.call_count, 2)
+        track.assert_any_call(10, "main", 11, 99)
+        track.assert_any_call(20, "main", 21, 22)
+        self.assertIn(("10", "main", "11", "99"), self.store.panels())
+        self.assertNotIn(("10", "main", "11", "12"), self.store.panels())
 
 
 if __name__ == "__main__":

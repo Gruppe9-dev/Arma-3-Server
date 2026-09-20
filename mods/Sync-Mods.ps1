@@ -292,6 +292,11 @@ function Install-WorkshopMod {
 $Config   = Get-FrameworkConfig
 $maintenanceLock = $null
 $serverWasStopped = $false
+$summaryReady = $false
+$modList = [System.Collections.ArrayList]::new()
+$toDownload = [System.Collections.ArrayList]::new()
+$current = 0; $failed = 0; $excluded = 0; $deployed = 0
+$operationFailed = $false
 if (-not $CheckOnly) {
     $maintenanceLock = Enter-FrameworkMaintenanceLock -Config $Config -Purpose "mod-sync:$Profile"
     if (-not $maintenanceLock) { throw 'Another framework operation is running.' }
@@ -321,6 +326,7 @@ if ($PSCmdlet.ParameterSetName -eq "Single") {
 } else {
     $profileData = Get-Profile -ProfileName $Profile
     if ($profileData.PSObject.Properties.Name -notcontains "WorkshopIds") {
+        $summaryReady = $true
         Write-Log "Profile '$Profile' has no WorkshopIds defined in profile.json." "Warning"
         exit 0
     }
@@ -329,6 +335,7 @@ if ($PSCmdlet.ParameterSetName -eq "Single") {
     }
 }
 
+$summaryReady = $true
 if ($modList.Count -eq 0) {
     Write-Log "No mods selected." "Info"
     exit 0
@@ -576,6 +583,9 @@ try {
     }
 } catch {
     Write-Log "Mod update failed: $($_.Exception.Message)" "Error"
+    # A failed batch never reaches deployment. Count its attempted items as
+    # failed, rather than reporting zero failures after SteamCMD rejects it.
+    $failed = $modList.Count - $current - $excluded - $deployed
     $operationFailed = $true
 } finally {
     $steamPass = $null
@@ -613,6 +623,17 @@ if ($operationFailed -or $failed -gt 0) {
             Write-Log "Profile '$Profile' could not be restarted." "Error"
             $operationFailed = $true
         }
+    }
+    if ($summaryReady) {
+        $pending = if ($CheckOnly) { $toDownload.Count } else { 0 }
+        $summary = [ordered]@{
+            Mode = if ($CheckOnly) { 'check' } elseif ($Update) { 'update' } else { 'sync' }
+            Total = $modList.Count; Current = $current; Deployed = $deployed
+            Pending = $pending; Excluded = $excluded; Failed = $failed
+            NotProcessed = [Math]::Max(0, $modList.Count - $current - $deployed - $pending - $excluded - $failed)
+        }
+        # Only numeric aggregate data is published by the Discord job embed.
+        Write-Output ('MOD_SYNC_RESULT=' + (ConvertTo-Json -InputObject $summary -Compress))
     }
 }
 

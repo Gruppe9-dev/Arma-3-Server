@@ -9,7 +9,7 @@ import discord
 
 import ssh_helper
 import utils
-from presentation import job_embed
+from presentation import job_embed, parse_mod_summary
 
 log = logging.getLogger(__name__)
 
@@ -123,7 +123,8 @@ class JobRunner:
                 log.info("Job %s guild=%s user=%s profile=%s action=%s result=%s\n%s", job_id,
                          interaction.guild_id, interaction.user.id, profile, action, status, ssh_helper.filter_output(output, 80))
                 try:
-                    await message.edit(embed=job_embed(job_id, action, profile, status))
+                    summary = parse_mod_summary(output) if script == "mods/Sync-Mods.ps1" and code != 255 else None
+                    await message.edit(embed=job_embed(job_id, action, profile, status, mod_summary=summary))
                 except discord.HTTPException:
                     log.warning("Could not publish final status for job %s; the recorded outcome is %s", job_id, status)
                 return code

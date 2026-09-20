@@ -87,6 +87,10 @@ class ServerCog(commands.Cog):
         return []
 
     async def _embed(self, profile):
+        embed, _ = await self._snapshot(profile)
+        return embed
+
+    async def _snapshot(self, profile):
         status = (await self._status(profile))[0]
         running = status["Running"]
         info = None
@@ -95,7 +99,7 @@ class ServerCog(commands.Cog):
                 info = await asyncio.to_thread(a2s.info, (config.SERVER_HOST, status["Port"] + 1), timeout=2)
             except Exception as exc:
                 log.debug("A2S unavailable for %s: %s", profile, exc)
-        return status_embed(profile, status, info)
+        return status_embed(profile, status, info), running
 
     async def _panel_loop(self, guild_id, profile, channel_id, message_id):
         misses = 0
@@ -105,14 +109,19 @@ class ServerCog(commands.Cog):
                 if not getattr(channel, "guild", None) or channel.guild.id != guild_id:
                     return
                 message = channel.get_partial_message(message_id)
+                running = None
                 try:
-                    embed = await self._embed(profile)
+                    embed, running = await self._snapshot(profile)
                     misses = 0
                 except Exception:
                     misses += 1
                     log.warning("Status query failed for %s (attempt %d)", profile, misses)
                     embed = discord.Embed(title=f"{profile} — Status unavailable", description="The host could not be queried. This does not mean the game server is offline.", color=discord.Color.orange())
                 await message.edit(embed=embed)
+                if running is False:
+                    # Bot restoration can still refresh this persisted message.
+                    log.debug("Paused offline status panel for %s in guild %s", profile, guild_id)
+                    return
             except (discord.NotFound, discord.Forbidden):
                 self.bot.store.remove_panel(guild_id, profile)
                 return
@@ -145,11 +154,27 @@ class ServerCog(commands.Cog):
             self._track_panel(guild_id, profile, int(channel), int(message))
 
     async def _ensure_panel(self, interaction, profile):
-        if (interaction.guild_id, profile) in self._tasks:
-            return
-        message = await interaction.channel.send(embed=await self._embed(profile))
+        # A new start/restart deserves a fresh panel at the bottom of the
+        # invoking channel. Other guilds keep their own independent panel.
+        message = await interaction.channel.send(embed=await self._embed(profile), allowed_mentions=discord.AllowedMentions.none())
         self.bot.store.save_panel(interaction.guild_id, profile, message.channel.id, message.id)
         self._track_panel(interaction.guild_id, profile, message.channel.id, message.id)
+        self.refresh_panels(profile, exclude_guild=interaction.guild_id)
+
+    def refresh_panels(self, profile, *, exclude_guild=None):
+        """Resume persisted panels across authorized guilds after a host action."""
+        resumed = set()
+        for guild, saved_profile, channel, message in self.bot.store.panels():
+            guild_id = int(guild)
+            if saved_profile != profile or guild_id not in config.GUILD_IDS or guild_id == exclude_guild:
+                continue
+            if config.ACCESS_POLICY and profile not in config.ACCESS_POLICY.guilds[guild_id]:
+                continue
+            # Replace even a still-active task: it may be finishing an offline
+            # snapshot from before the start/restart operation completed.
+            self._track_panel(guild_id, profile, int(channel), int(message))
+            resumed.add((guild_id, profile))
+        return resumed
 
     @server.command(name="list", description="List instances assigned to you")
     async def server_list(self, interaction: discord.Interaction):
@@ -179,13 +204,18 @@ class ServerCog(commands.Cog):
     @app_commands.autocomplete(profile=_profile_choices)
     async def server_stop(self, interaction: discord.Interaction, profile: str):
         if await utils.require_access(interaction, "stop", profile):
-            await self.bot.jobs.run(interaction, "stop", profile, "scripts/Stop-Server.ps1", Profile=profile)
+            code = await self.bot.jobs.run(interaction, "stop", profile, "scripts/Stop-Server.ps1", Profile=profile)
+            if code == 0:
+                self.refresh_panels(profile)
 
     @server.command(name="restart", description="Restart an assigned instance (ends the active game session)")
     @app_commands.autocomplete(profile=_profile_choices)
     async def server_restart(self, interaction: discord.Interaction, profile: str):
         if await utils.require_access(interaction, "restart", profile):
-            await self.bot.jobs.run(interaction, "restart", profile, "scripts/Restart-Server.ps1", Profile=profile)
+            code = await self.bot.jobs.run(interaction, "restart", profile, "scripts/Restart-Server.ps1", Profile=profile)
+            if code == 0:
+                with contextlib.suppress(discord.HTTPException, RuntimeError):
+                    await self._ensure_panel(interaction, profile)
 
     @server.command(name="status", description="Show status for an assigned instance")
     @app_commands.autocomplete(profile=_profile_choices)
@@ -194,7 +224,10 @@ class ServerCog(commands.Cog):
             return
         await interaction.response.defer(ephemeral=True)
         try:
-            await interaction.edit_original_response(embed=await self._embed(profile))
+            embed, running = await self._snapshot(profile)
+            await interaction.edit_original_response(embed=embed)
+            if running:
+                self.refresh_panels(profile)
         except RuntimeError:
             await interaction.edit_original_response(content="Host status is unavailable; the server may still be running.")
 

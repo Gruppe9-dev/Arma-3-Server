@@ -32,6 +32,7 @@ function Invoke-RestMethod {
 }
 function Invoke-SteamCMD {
     param($SteamCMDExe,$Username,$Password,$PreLoginCommands,$Commands)
+    if (Test-Path "$fixture\fail-download") { return 9 }
     foreach ($command in $Commands) {
         if ($command -notmatch '^workshop_download_item 107410 (\d+) validate$') { throw 'Unexpected Steam command' }
         $id=$Matches[1]
@@ -46,7 +47,7 @@ function Invoke-SteamCMD {
 
 @unittest.skipUnless(sys.platform == "win32", "PowerShell sync integration")
 class ModSyncTests(unittest.TestCase):
-    def run_sync(self, *, failed=False, update=False, excluded=False):
+    def run_sync(self, *, failed=False, update=False, excluded=False, check_only=False, sync=False, download_failure=False):
         with tempfile.TemporaryDirectory(prefix="arma-sync-tests-") as folder:
             root = Path(folder)
             for name in ("scripts", "mods", "shared", "steamcmd", "workshop"):
@@ -54,6 +55,8 @@ class ModSyncTests(unittest.TestCase):
             shutil.copyfile(Path(__file__).resolve().parents[1] / "mods/Sync-Mods.ps1", root / "mods/Sync-Mods.ps1")
             (root / "scripts/Common.ps1").write_text(COMMON, encoding="utf-8-sig")
             (root / "steamcmd/steamcmd.exe").write_text("never executed")
+            if download_failure:
+                (root / "fail-download").touch()
             mods = [{"Id": "100", "FolderName": "@available"}]
             details = [{"publishedfileid": "100", "result": 1, "consumer_app_id": 107410,
                         "time_updated": 2 if update else 1, "title": "Available mod"}]
@@ -70,7 +73,8 @@ class ModSyncTests(unittest.TestCase):
             (root / "mods/update-exclusions.json").write_text(json.dumps({"WorkshopIds": ["100"] if excluded else []}))
             result = subprocess.run([os.environ.get("ARMA_TEST_POWERSHELL", "powershell.exe"),
                                      "-NoProfile", "-NonInteractive", "-File", str(root / "mods/Sync-Mods.ps1"),
-                                     "-Profile", "fixture", "-Update"], capture_output=True, text=True, timeout=30)
+                                     "-Profile", "fixture", *( ["-Force"] if sync else ["-Update"] ),
+                                     *( ["-CheckOnly"] if check_only else [] )], capture_output=True, text=True, timeout=30)
             files = {mod["Id"]: (root / "shared" / mod["FolderName"] / "fixture.pbo").read_text().strip() for mod in mods}
             return result.returncode, result.stdout + result.stderr, files
 
@@ -89,6 +93,22 @@ class ModSyncTests(unittest.TestCase):
         self.assertIn("Sync Incomplete", output)
         self.assertEqual(files["100"], "updated-100", output)
         self.assertEqual(files["3746219164"], "original")
+        summary = json.loads(next(line.removeprefix("MOD_SYNC_RESULT=") for line in output.splitlines() if line.startswith("MOD_SYNC_RESULT=")))
+        self.assertEqual(summary, dict(Mode="update", Total=2, Current=0, Deployed=1, Pending=0, Excluded=0, Failed=1, NotProcessed=0))
+
+    def test_structured_counts_for_checks_sync_and_batch_failure(self):
+        cases = [({"check_only": True}, "check", 0, 1, 0, 0),
+                 ({"check_only": True, "update": True}, "check", 0, 0, 1, 0),
+                 ({"sync": True}, "sync", 1, 0, 0, 0),
+                 ({"update": True, "download_failure": True}, "update", 0, 0, 0, 1)]
+        for options, mode, deployed, current, pending, failed in cases:
+            with self.subTest(options=options):
+                code, output, _ = self.run_sync(**options)
+                self.assertEqual(code, 1 if failed else 0, output)
+                records = [line.removeprefix("MOD_SYNC_RESULT=") for line in output.splitlines() if line.startswith("MOD_SYNC_RESULT=")]
+                self.assertEqual(len(records), 1, output)
+                self.assertEqual(json.loads(records[0]), dict(Mode=mode, Total=1, Deployed=deployed,
+                    Current=current, Pending=pending, Excluded=0, Failed=failed, NotProcessed=0))
 
     def test_current_and_excluded_summaries_are_distinct(self):
         for excluded in (False, True):

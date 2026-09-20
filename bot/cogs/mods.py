@@ -1,5 +1,6 @@
 """Owner-only changes to the shared mod inventory and trusted profile metadata."""
 
+import contextlib
 import uuid
 
 import discord
@@ -40,8 +41,16 @@ class ModsCog(commands.Cog):
         if restart_server and (profile == "_all" or check_only):
             await interaction.response.send_message("Restart requires one concrete profile and cannot be combined with check-only.", ephemeral=True)
             return
-        await self.bot.jobs.run(interaction, "mods-update", profile, "mods/Sync-Mods.ps1", owner_only=True,
+        code = await self.bot.jobs.run(interaction, "mods-update", profile, "mods/Sync-Mods.ps1", owner_only=True,
                                 Profile=profile, Update=True, RestartServer=restart_server, CheckOnly=check_only)
+        if restart_server:
+            server = self.bot.get_cog("ServerCog")
+            if server:
+                if code == 0:
+                    with contextlib.suppress(discord.HTTPException, RuntimeError):
+                        await server._ensure_panel(interaction, profile)
+                else:
+                    server.refresh_panels(profile)
 
     @mods.command(name="import-preset", description="Owner: import a Launcher HTML preset into trusted profile metadata")
     async def mods_import_preset(self, interaction: discord.Interaction, profile: str, preset_html: discord.Attachment, merge: bool = False, sync_after: bool = False):

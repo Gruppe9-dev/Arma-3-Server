@@ -200,6 +200,14 @@ Each operation uses one public embed, updated from queued to running to its fina
 outcome; raw host output stays in private logs. Status panels show players, map,
 RPT mission, uptime, CPU/RAM, PID, processes/HCs, preset and port. A running process
 with an unavailable game query is shown separately from an offline server.
+Confirmed offline panels stop polling. Start/restart creates a new panel in the
+invoking channel and stops updating the previous one. Manual `/server status`
+can resume an existing panel after an out-of-band start. A bot restart checks
+persisted panels once and keeps polling only while running or status is unknown.
+Mod job embeds include aggregate counts: available updates for check-only,
+successful deployments for sync/update, current/already installed mods, failures,
+exclusions, and items not processed after an early abort. These counters require
+the updated host-side `mods/Sync-Mods.ps1` as well as the updated bot.
 
 Automatic updates are disabled by default. Set `BOT_AUTO_UPDATE_ENABLED=true`
 only when unattended Steam credentials and a maintenance policy are ready.
