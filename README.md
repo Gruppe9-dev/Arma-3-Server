@@ -223,8 +223,11 @@ and suppress repetitive `Current:` lines.
 
 Use [`setup/Configure-InstanceSFTP.ps1`](setup/Configure-InstanceSFTP.ps1) for new
 instance SFTP accounts, using `-PublicKeyFile` or `-UsePassword` (hidden password
-prompt). Currently provision one SFTP account per instance, because the installer
-replaces its directory ACLs. The older `Configure-SFTP.ps1` targets
+prompt). Provision one instance SFTP account per instance, because the installer
+replaces its directory ACLs. Pass `-GlobalSftpUsers main_sftp` to retain access for
+an existing global SFTP account. Use `-ResumeExisting` to finish a failed setup
+whose framework-created account remains disabled; its password is retained.
+The older `Configure-SFTP.ps1` targets
 the shared legacy mission folder and is unsuitable for community separation.
 The [hosting guide](docs/multi-community-hosting.md#restrict-sftp) explains keys,
 permissions, backups and acceptance checks.

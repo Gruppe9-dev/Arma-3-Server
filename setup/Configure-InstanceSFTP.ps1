@@ -1,13 +1,16 @@
 #Requires -Version 5.1
 #Requires -RunAsAdministrator
 <# .SYNOPSIS
-Provision a NEW SFTP-only local account for one isolated instance. The chroot
+Provision or resume an SFTP-only local account for one isolated instance. The chroot
 root is read-only; profile configuration and missions are writable. No junction
 to runtime/control data is exposed. Run -WhatIf to preview the scope.
 .DESCRIPTION
 Use -PublicKeyFile for key authentication or -UsePassword for password-only
 authentication. Password mode prompts securely unless -Password (SecureString)
 is supplied. -WhatIf does not prompt for a password or change the host.
+Use -ResumeExisting only for a disabled account left by a failed setup for this
+profile. Its existing password is retained unless -Password is explicitly given.
+Use -GlobalSftpUsers to include existing global SFTP accounts in the instance ACLs.
 #>
 [CmdletBinding(SupportsShouldProcess, DefaultParameterSetName='PublicKey')]
 param(
@@ -17,6 +20,8 @@ param(
     [Parameter(Mandatory, ParameterSetName='Password')][switch]$UsePassword,
     [Parameter(ParameterSetName='Password')][ValidateNotNull()][securestring]$Password,
     [Parameter(Mandatory)][string]$BotUser,
+    [switch]$ResumeExisting,
+    [string[]]$GlobalSftpUsers = @(),
     [string]$SshdConfig = 'C:\ProgramData\ssh\sshd_config'
 )
 Set-StrictMode -Version Latest
@@ -24,8 +29,19 @@ $ErrorActionPreference = 'Stop'
 . (Join-Path (Split-Path -Parent $PSScriptRoot) 'scripts\Common.ps1')
 $prof = Get-Profile $Profile
 if (-not $prof.Isolated -or -not (Test-Path -LiteralPath $prof.UploadDir)) { throw 'Provision an isolated instance first.' }
-if (Get-LocalUser -Name $SftpUser -ErrorAction SilentlyContinue) { throw 'Use a new dedicated SFTP account. Existing accounts are not repurposed.' }
+$account = Get-LocalUser -Name $SftpUser -ErrorAction SilentlyContinue
+if ($account) {
+    if (-not $ResumeExisting) { throw 'Account already exists. Use -ResumeExisting only for a disabled account left by a failed setup for this profile.' }
+    if ($account.Enabled -or $account.Description -ne "SFTP for Arma instance $Profile") {
+        throw 'Resume requires a disabled framework SFTP account for this exact profile. Other accounts are not repurposed.'
+    }
+} elseif ($ResumeExisting) { throw 'No existing account to resume. Omit -ResumeExisting to create a new account.' }
 $botAccount = Get-LocalUser -Name $BotUser -ErrorAction Stop
+$globalSids = @(foreach ($name in $GlobalSftpUsers) {
+    $globalAccount = Get-LocalUser -Name $name -ErrorAction Stop
+    if ($name -eq $SftpUser -or $globalAccount.SID -eq $botAccount.SID) { throw 'Global SFTP accounts must be distinct from the instance and bot accounts.' }
+    $globalAccount.SID.Value
+})
 $passwordAuth = $PSCmdlet.ParameterSetName -eq 'Password'
 if ($passwordAuth -and -not $UsePassword) { throw 'Password mode requires -UsePassword.' }
 if (-not $passwordAuth) {
@@ -36,9 +52,18 @@ if (-not $passwordAuth) {
 $sshd = (Get-Command sshd.exe -ErrorAction Stop).Source
 $existing = Get-Content -LiteralPath $SshdConfig -Raw
 if ($existing -match "(?im)^\s*Match\s+User\s+.*\b$([regex]::Escape($SftpUser))\b") { throw 'An SSH match block for this account already exists.' }
+# Put the exact user rule before all existing conditional rules. OpenSSH uses
+# the first applicable Match value, so later groups cannot loosen its controls.
+# Includes could introduce an earlier Match invisibly; reject rather than guess.
+if ($existing -match '(?im)^[ \t]*Include(?:[ \t]+|=)') {
+    throw 'Automatic SFTP setup requires a self-contained sshd_config without Include directives.'
+}
+$firstMatch = [regex]::Match($existing, '(?im)^[ \t]*Match(?:[ \t]+|=)')
+$globalConfig = if ($firstMatch.Success) { $existing.Substring(0, $firstMatch.Index) } else { $existing }
+$existingMatches = if ($firstMatch.Success) { $existing.Substring($firstMatch.Index) } else { '' }
 Assert-NoReparsePoint $prof.UploadDir
 $authMethod = if ($passwordAuth) { 'password' } else { 'publickey' }
-if (-not $PSCmdlet.ShouldProcess($SftpUser, "Create $authMethod SFTP-only account restricted to $($prof.UploadDir) and restart sshd")) { return }
+if (-not $PSCmdlet.ShouldProcess($SftpUser, "Configure $authMethod SFTP-only account restricted to $($prof.UploadDir), include global accounts [$($GlobalSftpUsers -join ', ')], and restart sshd")) { return }
 
 function Set-ExactDirectoryAcl {
     param([string]$Path, [hashtable]$Grants)
@@ -57,25 +82,33 @@ function Set-ExactDirectoryAcl {
     Set-Acl -LiteralPath $Path -AclObject $acl
 }
 
-if ($passwordAuth) {
+if (-not $account -and $passwordAuth) {
     $accountPassword = if ($null -ne $Password) { $Password } else { Read-Host "Password for '$SftpUser'" -AsSecureString }
     if ($accountPassword.Length -eq 0) { throw 'An empty SFTP password is not allowed.' }
-} else {
+} elseif (-not $account) {
     $bytes = New-Object byte[] 32
     $rng = [Security.Cryptography.RandomNumberGenerator]::Create()
     try { $rng.GetBytes($bytes) } finally { $rng.Dispose() }
     $accountPassword = ConvertTo-SecureString (([Convert]::ToBase64String($bytes)) + 'aA1!') -AsPlainText -Force
 }
 try {
-    $account = New-LocalUser -Name $SftpUser -Password $accountPassword -Disabled -PasswordNeverExpires -UserMayNotChangePassword -Description "SFTP for Arma instance $Profile"
+    if (-not $account) {
+        $account = New-LocalUser -Name $SftpUser -Password $accountPassword -Disabled -PasswordNeverExpires -UserMayNotChangePassword -Description "SFTP for Arma instance $Profile"
+    } elseif ($passwordAuth -and $PSBoundParameters.ContainsKey('Password')) {
+        if ($Password.Length -eq 0) { throw 'An empty SFTP password is not allowed.' }
+        Set-LocalUser -Name $SftpUser -Password $Password
+    }
 } finally { $accountPassword = $null }
 $sid = $account.SID.Value
 $botSid = $botAccount.SID.Value
 $base = @{ 'S-1-5-18' = 'FullControl'; 'S-1-5-32-544' = 'FullControl'; $botSid = 'Modify' }
+foreach ($globalSid in $globalSids) { $base[$globalSid] = 'Modify' }
 Set-ExactDirectoryAcl $prof.InstanceDir $base
 $rootAcl = @{ 'S-1-5-18' = 'FullControl'; 'S-1-5-32-544' = 'FullControl'; $botSid = 'ReadAndExecute'; $sid = 'ReadAndExecute' }
+foreach ($globalSid in $globalSids) { $rootAcl[$globalSid] = 'ReadAndExecute' }
 Set-ExactDirectoryAcl $prof.UploadDir $rootAcl
 $writeAcl = @{ 'S-1-5-18' = 'FullControl'; 'S-1-5-32-544' = 'FullControl'; $botSid = 'Modify'; $sid = 'Modify' }
+foreach ($globalSid in $globalSids) { $writeAcl[$globalSid] = 'Modify' }
 Set-ExactDirectoryAcl $prof.ConfigDir $writeAcl
 Set-ExactDirectoryAcl $prof.MissionDir $writeAcl
 if ($passwordAuth) {
@@ -110,15 +143,21 @@ Match User $SftpUser
 Match all
 "@
 $candidate = "$SshdConfig.arma-candidate"
+$validation = "$SshdConfig.arma-validation"
 $backup = "$SshdConfig.backup-$(Get-Date -Format 'yyyyMMddHHmmss')"
 $installed = $false
 try {
-    [IO.File]::WriteAllText($candidate, ($existing + $block), [Text.UTF8Encoding]::new($false))
+    $prefix = $globalConfig.TrimEnd() + "`r`n" + $block + "`r`n"
+    [IO.File]::WriteAllText($candidate, ($prefix + $existingMatches), [Text.UTF8Encoding]::new($false))
     & $sshd -t -f $candidate
     if ($LASTEXITCODE -ne 0) { throw 'OpenSSH rejected the candidate configuration. Existing sshd_config was preserved.' }
-    # Earlier Match blocks can take precedence. Inspect the effective result
-    # before enabling this account, rather than relying on syntax alone.
-    $effective = @(& $sshd -T -f $candidate -C "user=$SftpUser,host=localhost,addr=127.0.0.1")
+    # -T against Match Group needs another user's Windows logon token, which
+    # an administrator process cannot obtain like the SYSTEM sshd service can.
+    # Validate the exact first-match prefix; the complete candidate was syntax
+    # checked above. Later Match blocks cannot override these explicit settings.
+    # This checks confinement/auth settings, not all group/IP login eligibility.
+    [IO.File]::WriteAllText($validation, $prefix, [Text.UTF8Encoding]::new($false))
+    $effective = @(& $sshd -T -f $validation -C "user=$SftpUser,host=localhost,addr=127.0.0.1")
     if ($LASTEXITCODE -ne 0) { throw 'Could not validate the effective SFTP account configuration.' }
     $settings = @{}
     foreach ($line in $effective) {
@@ -149,8 +188,10 @@ try {
             Restart-Service sshd
         } catch { Write-Warning "Automatic SSH configuration restore failed. Restore $backup from the administrative console." }
     }
+    Write-Warning "Account '$SftpUser' remains disabled. After fixing the error, retry with -ResumeExisting and the same profile/authentication options."
     throw $failure
 } finally {
     if (Test-Path -LiteralPath $candidate) { Remove-Item -LiteralPath $candidate -Force }
+    if (Test-Path -LiteralPath $validation) { Remove-Item -LiteralPath $validation -Force }
 }
-Write-Log "SFTP account '$SftpUser' created. Writable paths: /mpmissions and /profile." 'Success'
+Write-Log "SFTP account '$SftpUser' configured and enabled. Writable paths: /mpmissions and /profile." 'Success'

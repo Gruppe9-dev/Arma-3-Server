@@ -182,8 +182,12 @@ as links; their targets contain shared game data.
 Use a **new dedicated account** and an elevated PowerShell on the dedicated host.
 Choose either an ed25519 public key or password-only authentication. Do not reuse
 the bot's SSH account or private key. The current installer replaces the instance
-directory ACLs: provision only one SFTP account per instance until multi-account
-ACL management is implemented.
+directory ACLs: provision only one instance SFTP account per instance. To retain
+access for existing global SFTP accounts, explicitly pass
+`-GlobalSftpUsers main_sftp` (or a comma-separated list of local account names).
+This grants access to this instance, without creating accounts or changing their
+SSH configuration. Its `files` root remains read-only; `/profile` and `/mpmissions`
+are writable. Manually added ACL entries are otherwise replaced.
 
 ```powershell
 .\setup\Configure-InstanceSFTP.ps1 -Profile friend -SftpUser friend_sftp `
@@ -207,21 +211,44 @@ Do not put a plaintext password in the command line or configuration files.
 
 Password mode applies `AuthenticationMethods password`, `PasswordAuthentication yes`,
 and `PubkeyAuthentication no` inside this user's `Match` block. Key mode retains
-public-key-only authentication. The selected mode is checked against the effective
-sshd configuration before the account is enabled; global login policy is preserved.
+public-key-only authentication. The generated user block precedes existing `Match`
+blocks so its explicit confinement/authentication settings take precedence. The
+complete candidate is syntax-checked with `sshd -t`. These explicit settings are
+then checked with `sshd -T` using the global configuration and generated block
+only: evaluating later `Match Group` rules from an administrator process can fail
+on Windows with `ga_init, unable to resolve user`, even when the account exists.
+This check does not establish eligibility under every group/IP login rule; verify
+a real SFTP login after setup. Configurations using active `Include` directives
+are rejected before changes because their rule ordering is not handled.
 
 The script creates a disabled account, prepares NTFS rights and an SFTP-only
-SFTP match block, validates syntax and effective account settings, backs up
+match block, validates the configuration as described above, backs up
 `sshd_config`, restarts SSH, and enables the account only after success. If that
 final step fails, it attempts to restore the previous configuration and leaves
 the account disabled. Keep an existing administrative console available
-while applying host SSH configuration. Existing accounts are not repurposed.
+while applying host SSH configuration. Unrelated existing accounts are not repurposed.
+
+To resume a failed setup, first inspect the account, then repeat the setup with
+`-ResumeExisting`. For example, retaining an existing `main_sftp` account's access:
+
+```powershell
+Get-LocalUser -Name sftp_60th | Select-Object Name, Enabled, Description
+.\setup\Configure-InstanceSFTP.ps1 -Profile 60th -SftpUser sftp_60th -BotUser arma_bot -UsePassword -ResumeExisting -GlobalSftpUsers main_sftp
+```
+
+Recovery requires a disabled account with the exact description
+`SFTP for Arma instance 60th` and no existing SSH user block for that account.
+It retains the account SID and password without another password prompt, unless
+`-Password` is explicitly supplied. Do not manually enable the account before
+the restricted SSH configuration has been installed. If no account exists,
+omit `-ResumeExisting` to create it.
 
 The user sees `/mpmissions` and `/profile`. They cannot change trusted
 `profile.json`, instance ownership, ports, free startup parameters, process state,
 framework scripts or Discord/Steam credentials through this SFTP root. This
-confinement is the same for both authentication modes. Existing accounts are
-still rejected; `-UsePassword` does not convert an already provisioned key account.
+confinement is the same for both authentication modes. Enabled or unrelated
+existing accounts are rejected; `-UsePassword` does not convert an already
+provisioned key account.
 
 Upload complete `.pbo` missions (temporary upload extensions are not deployed).
 Use a stopped server/start or restart to deploy changes. Running servers keep
