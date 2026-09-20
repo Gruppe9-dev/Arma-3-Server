@@ -150,12 +150,17 @@ extensions into another community's profile.
 
 ## Discord bot
 
-On the dedicated host, prepare the bot account and pin the host's SSH key:
+In an administrator PowerShell on the dedicated host, prepare the bot account
+and pin the host's SSH key:
 
 ```powershell
 .\bot\setup-ssh-key.ps1
 .\setup\Export-SshHostKey.ps1
 ```
+
+For an existing bot account, run `setup/Grant-BotCimAccess.ps1 -BotUser arma_bot`
+once as administrator to grant local process/UDP namespace reads. This is included
+in new SSH setups; see [permission details](docs/multi-community-hosting.md).
 
 Set `DISCORD_BOT_TOKEN`, `BOT_SSH_USER`, `BOT_SCRIPTS_PATH` and the SSH/query
 endpoints in `.env`. For multiple guilds, copy

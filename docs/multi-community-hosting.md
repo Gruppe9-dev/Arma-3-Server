@@ -81,6 +81,36 @@ deployment fails at `Get-Volume` with `Cannot connect to CIM server. Access deni
 update `scripts/Instances.ps1` and `setup/New-Instance.ps1`. Other filesystem and
 process-access failures still require checking the specific operation and path.
 
+Process identification still uses `Win32_Process` in `root/cimv2`, and UDP port
+checks use `root/StandardCimv2`. Existing bot accounts that receive
+`HRESULT 0x80041003` from `Get-CimInstance` need local namespace read access.
+Run this once in an **administrator PowerShell on the dedicated host**:
+
+```powershell
+.\setup\Grant-BotCimAccess.ps1 -BotUser arma_bot
+```
+
+New `bot/setup-ssh-key.ps1` runs include this step. The grant adds only
+[`WBEM_ENABLE` / Enable Account](https://learn.microsoft.com/en-us/windows/win32/wmisdk/namespace-access-rights-constants)
+on these two namespaces, without inheritance. It grants namespace reads, not a
+per-class permission, and adds no method-execution, write, remote-WMI or
+administrator rights. Existing permissions remain intact. Binary ACL backups
+are written to `.state/cim-permissions` before each change. Repeated runs leave
+an existing read grant unchanged; `-WhatIf` previews without writing.
+
+Verify from the same SSH identity used by the bot (this only counts processes
+and UDP endpoints; it does not start a server):
+
+```powershell
+docker compose exec -T arma-bot python -c "import asyncio; from ssh_helper import run_ps_command; print(asyncio.run(run_ps_command('Get-CimInstance Win32_Process -ErrorAction Stop | Measure-Object; Get-NetUDPEndpoint -ErrorAction Stop | Measure-Object'))[1])"
+```
+
+Both queries should return counts without access errors. Run managed Arma
+processes as the bot account so it can read their command lines and control
+them. Existing deny policies or additional provider restrictions can still
+block queries; the setup does not remove those policies. Instance identity
+checks must remain enabled so stop/restart cannot target a foreign process.
+
 Host-operation failures are reported with the original script path, line number
 and error ID. Deploy changes to `bot/ssh_helper.py` with a bot image rebuild to
 receive plain-text output instead of PowerShell CLIXML in the bot logs.

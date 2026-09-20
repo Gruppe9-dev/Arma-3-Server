@@ -1,3 +1,5 @@
+#Requires -Version 5.1
+#Requires -RunAsAdministrator
 <#
 .SYNOPSIS
     One-time setup: generates an SSH key pair for the Discord bot container
@@ -10,6 +12,7 @@
       2. Generate an ed25519 SSH key pair in ./bot/ (ssh_key + ssh_key.pub)
       3. Register the public key in the user's authorized_keys
       4. Grant the user read+execute rights on the framework scripts folder
+      5. Grant local WMI namespace read access for process and UDP checks
 
     After running this script:
       - Set BOT_SSH_USER=arma_bot in your .env
@@ -120,6 +123,8 @@ foreach ($folder in @('profiles','presets','.state')) {
     if ($LASTEXITCODE -ne 0) { throw "Could not grant access to $folder." }
 }
 Write-OK 'Granted script read/execute and data write access. Review older inherited or explicit ACLs when upgrading.'
+Write-Step "Granting '$BotUser' local CIM read access for process and UDP checks"
+& (Join-Path $ScriptsPath 'setup\Grant-BotCimAccess.ps1') -BotUser $BotUser
 Write-Warn 'Also grant the bot account Modify access to the shared game/Workshop directories for owner maintenance.'
 Write-Warn 'Run setup/Export-SshHostKey.ps1 on this host before starting the bot.'
 
