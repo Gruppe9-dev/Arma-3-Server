@@ -35,16 +35,16 @@ Framework/
   profiles/friend/profile.json             owner-controlled metadata
   .state/friend/                           internal state; never exposed over SFTP
   config/access.json                      Discord policy; never exposed over SFTP
-Instance data/friend/
-  files/                                  SFTP root (read-only root itself)
+Instance data/friend/                      SFTP root (read-only to instance user)
+  files/                                  read-only container
     mpmissions/                           uploaded .pbo missions
     profile/                              editable server.cfg, basic.cfg,
                                           friend.Arma3Profile, userconfig/
-  runtime/                                private to the operator/bot
+  runtime/                                read-only container; no inherited user grant
     game/                                 engine junctions, small binary copies,
                                           local userconfig, keys, mpmissions, BE
     config/                               configuration snapshot
-    profiles/                             Arma profiles, saves, RPT and log archives
+    profiles/                             read-only Arma profiles, saves, RPT/log archives
 ```
 
 ## Configure the host
@@ -186,8 +186,9 @@ directory ACLs: provision only one instance SFTP account per instance. To retain
 access for existing global SFTP accounts, explicitly pass
 `-GlobalSftpUsers main_sftp` (or a comma-separated list of local account names).
 This grants access to this instance, without creating accounts or changing their
-SSH configuration. Its `files` root remains read-only; `/profile` and `/mpmissions`
-are writable. Manually added ACL entries are otherwise replaced.
+SSH configuration. The `files` container remains read-only; `/files/profile` and
+`/files/mpmissions` are writable. Global accounts retain Modify access to runtime
+data. Manually added ACL entries are otherwise replaced.
 
 ```powershell
 .\setup\Configure-InstanceSFTP.ps1 -Profile friend -SftpUser friend_sftp `
@@ -243,12 +244,42 @@ It retains the account SID and password without another password prompt, unless
 the restricted SSH configuration has been installed. If no account exists,
 omit `-ResumeExisting` to create it.
 
-The user sees `/mpmissions` and `/profile`. They cannot change trusted
+To upgrade an already configured account to the instance-root layout, deploy the
+updated setup script and run this from an elevated PowerShell on the host:
+
+```powershell
+.\setup\Configure-InstanceSFTP.ps1 -Profile 60th -SftpUser sftp_60th -BotUser arma_bot -UpdateExisting -GlobalSftpUsers main_sftp -WhatIf
+.\setup\Configure-InstanceSFTP.ps1 -Profile 60th -SftpUser sftp_60th -BotUser arma_bot -UpdateExisting -GlobalSftpUsers main_sftp
+```
+
+`-UpdateExisting` preserves the account SID, password or authorized-key path. Do
+not combine it with `-UsePassword`, `-PublicKeyFile` or `-ResumeExisting`. It requires
+the matching framework account description and exactly one unmodified managed
+SSH block. Unrelated accounts and manually configured SSH blocks are rejected.
+The account is disabled during configuration and enabled after SSH restarts. A
+failed update leaves it disabled; correct the error and repeat `-UpdateExisting`.
+SSH configuration rollback does not undo ACL changes. No bot rebuild is needed.
+
+After reconnecting, the user can upload under `/files/mpmissions` and
+`/files/profile`, and read/download `/runtime/profiles`. Update saved WinSCP paths
+that previously pointed to `/mpmissions` or `/profile`. The runtime profile tree
+is the live directory, without copies or sync delay, and includes saves and
+profile data as well as RPTs/logs. Files held exclusively by Arma may remain
+unreadable until Arma releases them. All of this tree is read-only to the instance
+account: editing, uploading, renaming and deleting there are not allowed.
+
+The installer grants the instance account non-inheriting read/list rights on
+the instance and runtime roots, and inheriting read access on runtime/profiles.
+It resets existing profile files/subdirectories to inherit that ACL, including
+protected ACLs from migrations. It rejects reparse points in the exposed profile
+tree and does not traverse or grant user rights to runtime/game. Engine and
+configuration snapshots stay outside the granted read/write subtrees.
+
+They cannot change trusted
 `profile.json`, instance ownership, ports, free startup parameters, process state,
 framework scripts or Discord/Steam credentials through this SFTP root. This
-confinement is the same for both authentication modes. Enabled or unrelated
-existing accounts are rejected; `-UsePassword` does not convert an already
-provisioned key account.
+confinement is the same for both authentication modes. `-UsePassword` does not
+convert an already provisioned key account.
 
 Upload complete `.pbo` missions (temporary upload extensions are not deployed).
 Use a stopped server/start or restart to deploy changes. Running servers keep
@@ -257,8 +288,8 @@ The importer locks each source file against writers while copying it. Loose
 mission directories are not deployed. `userconfig` supports `.sqf`, `.hpp`, `.h`,
 `.inc`, `.cfg`, `.txt` files up to 2 MiB each. `server.cfg`/`basic.cfg` must be
 self-contained and at most 2 MiB. Uploaded `profile.json` files are ignored.
-`profile/<id>.Arma3Profile` is deployed to `runtime/profiles/Users/<id>/`.
-Runtime saves stay private and are not overwritten by configuration uploads.
+`files/profile/<id>.Arma3Profile` is deployed to `runtime/profiles/Users/<id>/`.
+Runtime saves remain read-only to SFTP users and are not overwritten by configuration uploads.
 
 ## Connect both Discord guilds
 
@@ -391,8 +422,12 @@ Docker engine was unavailable.
 Before granting production access, verify on the dedicated host:
 
 1. Both Discords list only their assigned instances; crafted foreign IDs fail.
-2. Friend SFTP can modify its two folders but cannot read the main instance,
-   runtime/control data or secrets, and cannot open a shell/forward connections.
+2. Friend SFTP can modify `/files/mpmissions` and `/files/profile`, read existing
+   and newly created RPT/log files under `/runtime/profiles`, and cannot upload,
+   rename or delete anything in that runtime tree. Check both listing and direct
+   known-file access to `/runtime/game` and `/runtime/config` are rejected.
+   Friend SFTP cannot read the main instance,
+   private engine/control data or framework secrets, and cannot open a shell/forward connections.
 3. Both servers start with different missions/userconfig and connectable ports.
    Check Arma/Battleye/RPT behavior using the real installed build and mods.
 4. Stopping the friend leaves Gruppe 9 and its HCs running; repeat with missing

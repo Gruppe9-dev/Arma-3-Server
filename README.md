@@ -75,7 +75,8 @@ Provisioning does not open firewall ports or grant Discord access.
 ## Profiles and presets
 
 Trusted control metadata is stored in `profiles/<id>/profile.json`. SFTP users
-receive only their instance's `files/mpmissions` and `files/profile` directories.
+can edit their instance's `files/mpmissions` and `files/profile` directories and
+read its `runtime/profiles` tree, including logs and saves.
 Uploaded missions and configuration become active on the next start/restart.
 Large game data is linked and mods are loaded from the shared inventory.
 
@@ -227,6 +228,16 @@ prompt). Provision one instance SFTP account per instance, because the installer
 replaces its directory ACLs. Pass `-GlobalSftpUsers main_sftp` to retain access for
 an existing global SFTP account. Use `-ResumeExisting` to finish a failed setup
 whose framework-created account remains disabled; its password is retained.
+For an already configured account, use `-UpdateExisting` instead of authentication
+parameters to retain its credentials and enable the instance-root layout:
+
+```powershell
+.\setup\Configure-InstanceSFTP.ps1 -Profile 60th -SftpUser sftp_60th -BotUser arma_bot -UpdateExisting -GlobalSftpUsers main_sftp
+```
+
+Reconnect SFTP afterward. Upload paths are now `/files/mpmissions` and
+`/files/profile`; `/runtime/profiles` is read-only. New accounts use this layout
+automatically. The update restarts SSH and does not rebuild the bot container.
 The older `Configure-SFTP.ps1` targets
 the shared legacy mission folder and is unsuitable for community separation.
 The [hosting guide](docs/multi-community-hosting.md#restrict-sftp) explains keys,
@@ -245,6 +256,7 @@ Install `bot/requirements.txt` into a local virtual environment, then run:
 python -B -m unittest discover -s tests -v
 powershell -NoProfile -File tests\Test-Instances.ps1
 powershell -NoProfile -File tests\Test-SharedRuntime.ps1
+powershell -NoProfile -File tests\Test-InstanceSFTP.ps1
 ```
 
 These checks use mocks and temporary filesystem fixtures. They do not launch
