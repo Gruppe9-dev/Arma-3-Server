@@ -343,6 +343,7 @@ the base profile and is reserved. Example:
 | --- | --- |
 | `/server list` | List only assigned instances |
 | `/server status profile` | Instance CPU/RAM, process state, A2S and RPT fallback |
+| `/server panel channel profiles` | Fixed stats/buttons for approved instances; operator + target-channel management or owner |
 | `/server start profile` | Validate, deploy snapshots, start server and HCs |
 | `/server stop profile` | Terminate only verified instance processes |
 | `/server restart profile` | Stop/start; ends the active game session |

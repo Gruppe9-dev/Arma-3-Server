@@ -186,6 +186,7 @@ docker compose logs -f arma-bot
 | --- | --- |
 | `/server list` | List assigned instances |
 | `/server status profile` | Instance CPU/RAM, uptime, HC count and A2S status |
+| `/server panel channel profiles` | Create/move persistent controls; comma-separated instance IDs |
 | `/server start profile` | Start an assigned instance |
 | `/server stop profile` | Stop only that instance's verified processes |
 | `/server restart profile` | Stop and start that instance |
@@ -197,18 +198,49 @@ Operators cannot modify host paths, arbitrary startup arguments, Workshop conten
 or another guild's instances. Status panels and operation history are persisted
 in `bot/data/jobs.sqlite3`. Jobs are serialized and permissions are checked again
 before execution. Interrupted jobs are recorded without automatic replay.
-Each operation uses one public embed, updated from queued to running to its final
-outcome; raw host output stays in private logs. Status panels show players, map,
+Slash-command operations use one public embed, updated from queued to running to
+their final outcome. Panel-button operations use a private response instead;
+raw host output stays in private logs. Status panels show players, map,
 RPT mission, uptime, CPU/RAM, PID, processes/HCs, preset and port. A running process
 with an unavailable game query is shown separately from an offline server.
-Confirmed offline panels stop polling. Start/restart creates a new panel in the
-invoking channel and stops updating the previous one. Manual `/server status`
+Confirmed offline panels stop polling. Without fixed controls, start/restart
+creates a new status panel in the invoking channel and stops updating the previous
+one. With fixed controls, it refreshes the existing control panel. Manual `/server status`
 can resume an existing panel after an out-of-band start. A bot restart checks
 persisted panels once and keeps polling only while running or status is unknown.
 Mod job embeds include aggregate counts: available updates for check-only,
 successful deployments for sync/update, current/already installed mods, failures,
 exclusions, and items not processed after an early abort. These counters require
 the updated host-side `mods/Sync-Mods.ps1` as well as the updated bot.
+
+### Persistent server controls
+
+```text
+/server panel channel:#server-control profiles:main,60th
+```
+
+This creates one card per instance, with **Start**, **Stop**, and **Refresh** buttons
+and the existing live stats. Only instances assigned to this Discord guild can be
+published. Creation requires operator access to every selected instance and either
+Manage Channels in the target channel or framework owner access. The bot needs
+View Channel, Send Messages, and Embed Links there. Keep channel visibility scoped
+to the community that should see the published stats.
+
+Each click checks instance access; viewers can refresh, while operators can start
+and stop. Roles are fetched again before host execution. Stop ends the current game
+session. Repeating the command reuses the message in the same channel or moves it
+to the new channel and retires the previous controls. There is one fixed panel per
+instance per guild. Use a dedicated channel to keep these cards easy to find.
+
+Message IDs and channel/profile mappings are stored in `bot/data/jobs.sqlite3`.
+The existing `./bot/data:/app/data` mount preserves them during
+`docker compose up -d --build arma-bot`. Keep that host directory when deploying;
+the same bot account registers the saved buttons and refreshes the original messages
+on startup. Interrupted operations are not replayed. A deleted Discord message can
+be recreated with `/server panel`; temporary permission loss retains its database
+record and retries. Offline cards pause polling; Start, Refresh, `/server status`,
+or a bot restart trigger another check. Starts performed outside the bot require
+Refresh or `/server status` to resume live updates.
 
 Automatic updates are disabled by default. Set `BOT_AUTO_UPDATE_ENABLED=true`
 only when unattended Steam credentials and a maintenance policy are ready.

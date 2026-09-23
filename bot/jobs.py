@@ -31,6 +31,11 @@ class JobStore:
                 channel_id TEXT NOT NULL, message_id TEXT NOT NULL,
                 PRIMARY KEY (guild_id, profile)
             );
+            CREATE TABLE IF NOT EXISTS control_panels (
+                guild_id TEXT NOT NULL, profile TEXT NOT NULL,
+                channel_id TEXT NOT NULL, message_id TEXT NOT NULL,
+                PRIMARY KEY (guild_id, profile)
+            );
         """)
         # A host-side process may outlive SSH/bot termination. Never replay it.
         self.db.execute("UPDATE jobs SET status='interrupted' WHERE status IN ('queued','running')")
@@ -62,6 +67,24 @@ class JobStore:
         self.db.execute("DELETE FROM panels WHERE guild_id=? AND profile=?", (str(guild), profile))
         self.db.commit()
 
+    def save_control_panel(self, guild: int, profile: str, channel: int, message: int):
+        self.db.execute("INSERT OR REPLACE INTO control_panels VALUES(?,?,?,?)",
+                        (str(guild), profile, str(channel), str(message)))
+        self.db.commit()
+
+    def control_panels(self):
+        return self.db.execute("SELECT guild_id,profile,channel_id,message_id FROM control_panels").fetchall()
+
+    def control_panel(self, guild: int, profile: str):
+        return self.db.execute("SELECT channel_id,message_id FROM control_panels WHERE guild_id=? AND profile=?",
+                               (str(guild), profile)).fetchone()
+
+    def remove_control_panel(self, guild: int, profile: str, message: int):
+        # An old refresh task must not erase a concurrently replaced panel.
+        self.db.execute("DELETE FROM control_panels WHERE guild_id=? AND profile=? AND message_id=?",
+                        (str(guild), profile, str(message)))
+        self.db.commit()
+
 
 class JobRunner:
     def __init__(self, store: JobStore):
@@ -69,7 +92,7 @@ class JobRunner:
         self.lock = asyncio.Lock()
         self.pending: set[tuple[int, str]] = set()
 
-    async def run(self, interaction, action: str, profile: str, script: str, *, owner_only=False, **parameters):
+    async def run(self, interaction, action: str, profile: str, script: str, *, owner_only=False, private=False, **parameters):
         authorized = utils.has_admin_auth(interaction) if owner_only else utils.can_access(interaction, action, profile)
         if not authorized:
             if interaction.response.is_done():
@@ -98,12 +121,18 @@ class JobRunner:
             if not interaction.response.is_done():
                 await interaction.response.defer(ephemeral=True, thinking=True)
             job_id = self.store.create(interaction.guild_id, interaction.user.id, profile, action)
-            # Regular bot messages survive the 15-minute interaction token limit.
-            message = await interaction.channel.send(
-                embed=job_embed(job_id, action, profile, "queued"),
-                allowed_mentions=discord.AllowedMentions.none(),
-            )
-            await interaction.edit_original_response(content=f"Operation accepted: {message.jump_url}")
+            if private:
+                # Panel buttons keep the control channel clean. The durable job
+                # record and refreshed panel survive interaction-token expiry.
+                await interaction.edit_original_response(embed=job_embed(job_id, action, profile, "queued"))
+                message = await interaction.original_response()
+            else:
+                # Regular bot messages survive the 15-minute interaction token limit.
+                message = await interaction.channel.send(
+                    embed=job_embed(job_id, action, profile, "queued"),
+                    allowed_mentions=discord.AllowedMentions.none(),
+                )
+                await interaction.edit_original_response(content=f"Operation accepted: {message.jump_url}")
             async with self.lock:
                 # Roles/membership may have changed while the job was queued.
                 member = await interaction.guild.fetch_member(interaction.user.id)
