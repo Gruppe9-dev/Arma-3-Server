@@ -1,6 +1,34 @@
 services:
+  arma-bot-storage-init:
+    build: ./bot
+    image: arma3server-arma-bot:local
+    user: "0:0"
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        chown -R 10001:10001 /app/data /app/logs
+        chmod -R u+rwX,go-rwx /app/data /app/logs
+    restart: "no"
+    read_only: true
+    network_mode: none
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - FOWNER
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 20
+    mem_limit: 32m
+    cpus: 0.10
+    volumes:
+      - ./bot/data:/app/data
+      - ./bot/logs:/app/logs
+
   arma-bot:
     build: ./bot
+    image: arma3server-arma-bot:local
     container_name: arma3-discord-bot
     restart: unless-stopped
     read_only: true
@@ -19,6 +47,9 @@ services:
       options:
         max-size: 10m
         max-file: "3"
+    depends_on:
+      arma-bot-storage-init:
+        condition: service_completed_successfully
     volumes:
       # Config (read-only inside the container)
       - ./.env:/app/.env:ro
