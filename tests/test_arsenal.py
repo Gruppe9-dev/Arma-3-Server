@@ -5,7 +5,9 @@ import os
 from pathlib import Path
 import sys
 import tempfile
+from types import SimpleNamespace
 import unittest
+from unittest.mock import patch
 
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "bot"))
@@ -29,7 +31,7 @@ from arsenal_validation import (
     parse_item_payload,
     parse_loadout_payload,
 )
-from cogs.arsenal import ArsenalCog
+from cogs.arsenal import ArsenalCog, _profile_display_name, _profile_key
 from jobs import JobStore
 
 
@@ -83,7 +85,30 @@ class ArsenalAccessTests(unittest.TestCase):
             AccessPolicy(payload)
 
 
-class ArsenalCommandRegistrationTests(unittest.TestCase):
+class ArsenalCommandRegistrationTests(unittest.IsolatedAsyncioTestCase):
+    def test_default_profile_has_the_requested_alias_and_visible_name(self):
+        self.assertEqual(_profile_display_name("sd60-default"), "60th")
+        self.assertEqual(_profile_display_name("future-profile"), "future-profile")
+        self.assertEqual(_profile_key("60th"), "sd60-default")
+        self.assertEqual(_profile_key("60TH"), "sd60-default")
+        self.assertEqual(_profile_key("sd60-default"), "sd60-default")
+
+    async def test_autocomplete_submits_the_public_profile_alias(self):
+        policy = SimpleNamespace(
+            arsenal_profiles={10: {"sd60-default": object()}},
+        )
+        interaction = SimpleNamespace(guild_id=10)
+        with (
+            patch("cogs.arsenal.config.ACCESS_POLICY", policy),
+            patch("cogs.arsenal.utils.can_access_arsenal", return_value=True),
+        ):
+            choices = await ArsenalCog._profile_choices(None, interaction, "60")
+
+        self.assertEqual(
+            [(choice.name, choice.value) for choice in choices],
+            [("60th", "60th")],
+        )
+
     def test_expected_nested_slash_commands_are_registered(self):
         root_commands = {command.name: command for command in ArsenalCog.arsenal.commands}
         self.assertEqual(set(root_commands), {"items", "kits", "status", "diff", "discard", "publish"})

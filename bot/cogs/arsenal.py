@@ -30,6 +30,23 @@ from arsenal_validation import (
 
 log = logging.getLogger(__name__)
 
+PROFILE_DISPLAY_NAMES = {
+    "sd60-default": "60th",
+}
+
+PROFILE_INPUT_ALIASES = {
+    "60th": "sd60-default",
+}
+
+
+def _profile_display_name(profile: str) -> str:
+    return PROFILE_DISPLAY_NAMES.get(profile, profile)
+
+
+def _profile_key(value: str) -> str:
+    normalized = value.strip()
+    return PROFILE_INPUT_ALIASES.get(normalized.casefold(), normalized)
+
 
 def _diff_text(diff: dict[str, object]) -> str:
     added_items = diff["added_items"]
@@ -119,9 +136,15 @@ class ArsenalCog(commands.Cog):
         else:
             profiles = config.ARSENAL_PROFILES if utils.has_admin_auth(interaction) else ()
         return [
-            app_commands.Choice(name=profile, value=profile)
+            app_commands.Choice(
+                name=_profile_display_name(profile),
+                value=_profile_display_name(profile),
+            )
             for profile in profiles
-            if current.lower() in profile.lower()
+            if (
+                current.lower() in profile.lower()
+                or current.lower() in _profile_display_name(profile).lower()
+            )
             and utils.can_access_arsenal(interaction, "view", profile)
         ][:25]
 
@@ -198,7 +221,10 @@ class ArsenalCog(commands.Cog):
             active, draft, content, detail = await self._save_mutation(interaction, profile, mutate)
             diff = diff_content(active["arsenal"], content)
             await interaction.edit_original_response(
-                content=f"Draft `{profile}` v{draft.version} saved. {detail}\n{_diff_text(diff)}"
+                content=(
+                    f"Draft `{_profile_display_name(profile)}` v{draft.version} saved. "
+                    f"{detail}\n{_diff_text(diff)}"
+                )
             )
         except PermissionError as exc:
             await interaction.edit_original_response(content=str(exc))
@@ -214,6 +240,7 @@ class ArsenalCog(commands.Cog):
     @arsenal.command(name="status", description="Show the active revision and local draft summary")
     @app_commands.autocomplete(profile=_profile_choices)
     async def arsenal_status(self, interaction: discord.Interaction, profile: str):
+        profile = _profile_key(profile)
         if not await utils.require_arsenal_access(interaction, "view", profile):
             return
         await interaction.response.defer(ephemeral=True)
@@ -221,7 +248,7 @@ class ArsenalCog(commands.Cog):
             active = await self.client.get_active(profile)
             stored = self._stored_draft(profile, interaction.guild_id)
             lines = [
-                f"Profile: `{profile}`",
+                f"Profile: `{_profile_display_name(profile)}`",
                 f"Active revision: `{active['revision']['number']}`",
                 f"Active items: `{len(active['arsenal']['allowedItems'])}`",
                 f"Active kits: `{len(active['arsenal']['kits'])}`",
@@ -245,6 +272,8 @@ class ArsenalCog(commands.Cog):
     @items.command(name="add", description="Add one classname to the draft whitelist")
     @app_commands.autocomplete(profile=_profile_choices)
     async def items_add(self, interaction: discord.Interaction, profile: str, classname: str):
+        profile = _profile_key(profile)
+
         def mutate(content):
             if CLASS_NAME_RE.fullmatch(classname) is None:
                 raise ArsenalValidationError("Enter a valid Arma classname.")
@@ -258,6 +287,8 @@ class ArsenalCog(commands.Cog):
     @items.command(name="remove", description="Remove one classname from the draft whitelist")
     @app_commands.autocomplete(profile=_profile_choices)
     async def items_remove(self, interaction: discord.Interaction, profile: str, classname: str):
+        profile = _profile_key(profile)
+
         def mutate(content):
             if CLASS_NAME_RE.fullmatch(classname) is None:
                 raise ArsenalValidationError("Enter a valid Arma classname.")
@@ -278,6 +309,7 @@ class ArsenalCog(commands.Cog):
         data: str | None = None,
         attachment: discord.Attachment | None = None,
     ):
+        profile = _profile_key(profile)
         if not await utils.require_arsenal_access(interaction, "edit", profile):
             return
         await interaction.response.defer(ephemeral=True, thinking=True)
@@ -319,6 +351,7 @@ class ArsenalCog(commands.Cog):
         data: str | None = None,
         attachment: discord.Attachment | None = None,
     ):
+        profile = _profile_key(profile)
         if not await utils.require_arsenal_access(interaction, "edit", profile):
             return
         await interaction.response.defer(ephemeral=True, thinking=True)
@@ -352,6 +385,8 @@ class ArsenalCog(commands.Cog):
     @kits.command(name="remove", description="Remove one kit from the draft")
     @app_commands.autocomplete(profile=_profile_choices)
     async def kits_remove(self, interaction: discord.Interaction, profile: str, kit_id: str):
+        profile = _profile_key(profile)
+
         def mutate(content):
             if IDENTIFIER_RE.fullmatch(kit_id) is None:
                 raise ArsenalValidationError("Enter a valid kit identifier.")
@@ -364,6 +399,7 @@ class ArsenalCog(commands.Cog):
     @arsenal.command(name="diff", description="Show the unpublished draft changes")
     @app_commands.autocomplete(profile=_profile_choices)
     async def arsenal_diff(self, interaction: discord.Interaction, profile: str):
+        profile = _profile_key(profile)
         if not await utils.require_arsenal_access(interaction, "view", profile):
             return
         await interaction.response.defer(ephemeral=True)
@@ -385,6 +421,7 @@ class ArsenalCog(commands.Cog):
     @arsenal.command(name="discard", description="Discard the unpublished draft")
     @app_commands.autocomplete(profile=_profile_choices)
     async def arsenal_discard(self, interaction: discord.Interaction, profile: str):
+        profile = _profile_key(profile)
         if not await utils.require_arsenal_access(interaction, "edit", profile):
             return
         await interaction.response.defer(ephemeral=True)
@@ -408,6 +445,7 @@ class ArsenalCog(commands.Cog):
     @arsenal.command(name="publish", description="Validate and publish the current draft as a new revision")
     @app_commands.autocomplete(profile=_profile_choices)
     async def arsenal_publish(self, interaction: discord.Interaction, profile: str):
+        profile = _profile_key(profile)
         if not await utils.require_arsenal_access(interaction, "publish", profile):
             return
         await interaction.response.defer(ephemeral=True)
@@ -430,7 +468,8 @@ class ArsenalCog(commands.Cog):
             )
             await interaction.edit_original_response(
                 content=(
-                    f"Publish `{profile}` from revision `{stored.base_revision}` as a new immutable revision?\n"
+                    f"Publish `{_profile_display_name(profile)}` from revision "
+                    f"`{stored.base_revision}` as a new immutable revision?\n"
                     + _diff_text(diff)
                 ),
                 view=view,
@@ -475,7 +514,11 @@ class ArsenalCog(commands.Cog):
                 log.error("Published arsenal revision but failed to clear draft profile=%s version=%s", profile, version)
                 return f"Revision `{result['revision']}` was published, but the local draft could not be cleared. Contact the owner."
             replayed = " (idempotent replay)" if result.get("replayed") else ""
-            return f"Published immutable revision `{result['revision']}` for `{profile}`{replayed}. It loads at the next mission start."
+            return (
+                f"Published immutable revision `{result['revision']}` for "
+                f"`{_profile_display_name(profile)}`{replayed}. "
+                "It loads at the next mission start."
+            )
 
 
 async def setup(bot):

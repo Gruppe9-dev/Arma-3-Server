@@ -31,6 +31,10 @@ publication.
 
 ## Commands
 
+Use `60th` for the Discord `profile` option. The bot maps this public alias to
+the internal backend key `sd60-default`. Keep `config/access.json` and
+`BOT_ARSENAL_PROFILES` configured with the internal key `sd60-default`.
+
 | Command | Purpose |
 | --- | --- |
 | `/arsenal status profile` | Show the active revision and persisted draft |
