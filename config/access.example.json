@@ -10,6 +10,16 @@
           "viewer_role_ids": [],
           "viewer_user_ids": []
         }
+      },
+      "arsenal_profiles": {
+        "sd60-default": {
+          "editor_role_ids": ["REPLACE_WITH_ARSENAL_EDITOR_ROLE_ID"],
+          "editor_user_ids": [],
+          "publisher_role_ids": ["REPLACE_WITH_ARSENAL_PUBLISHER_ROLE_ID"],
+          "publisher_user_ids": [],
+          "viewer_role_ids": [],
+          "viewer_user_ids": []
+        }
       }
     },
     "REPLACE_WITH_FRIEND_GUILD_ID": {
@@ -20,6 +30,8 @@
           "viewer_role_ids": [],
           "viewer_user_ids": []
         }
+      },
+      "arsenal_profiles": {
       }
     }
   }

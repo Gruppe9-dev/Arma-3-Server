@@ -5,7 +5,7 @@ Every other module imports from here instead of reading os.environ directly.
 
 import os
 from dotenv import load_dotenv
-from access import AccessPolicy
+from access import AccessPolicy, valid_profile
 
 load_dotenv("/app/.env")
 
@@ -96,6 +96,29 @@ AUTO_UPDATE_INITIAL_DELAY_SECONDS = _parse_bounded_int(
 AUTO_UPDATE_TIMEOUT_MINUTES = _parse_bounded_int(
     "BOT_AUTO_UPDATE_TIMEOUT_MINUTES", 180, 5, 1440
 )
+
+# SD60 Arsenal publisher. Disabled unless the private Docker-network integration
+# and its dedicated token mount are configured explicitly.
+ARSENAL_ENABLED = _parse_bool("BOT_ARSENAL_ENABLED", False)
+ARSENAL_API_URL = os.getenv(
+    "BOT_ARSENAL_API_URL", "http://sd60-arsenal-publisher:3000"
+).strip().rstrip("/")
+ARSENAL_API_TOKEN_FILE = os.getenv(
+    "BOT_ARSENAL_API_TOKEN_FILE", "/run/secrets/arsenal_publisher_token"
+).strip()
+ARSENAL_TIMEOUT_SECONDS = _parse_bounded_int(
+    "BOT_ARSENAL_TIMEOUT_SECONDS", 8, 2, 30
+)
+ARSENAL_PROFILES = tuple(dict.fromkeys(
+    value.strip() for value in os.getenv("BOT_ARSENAL_PROFILES", "sd60-default").split(",")
+    if value.strip()
+))
+if ARSENAL_ENABLED and ARSENAL_API_URL != "http://sd60-arsenal-publisher:3000":
+    raise ValueError("BOT_ARSENAL_API_URL must use the private SD60 publisher service")
+if ARSENAL_ENABLED and not ARSENAL_API_TOKEN_FILE:
+    raise ValueError("BOT_ARSENAL_API_TOKEN_FILE is required when arsenal publishing is enabled")
+if ARSENAL_ENABLED and (not ARSENAL_PROFILES or any(not valid_profile(value) for value in ARSENAL_PROFILES)):
+    raise ValueError("BOT_ARSENAL_PROFILES contains an invalid profile")
 
 # ── Misc ───────────────────────────────────────────────────────────────────────
 MAX_CHARS        = 1900   # Discord message limit is 2000; keep buffer for code-block markers

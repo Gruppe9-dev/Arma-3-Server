@@ -1,0 +1,22 @@
+services:
+  arma-bot:
+    environment:
+      BOT_ARSENAL_ENABLED: ${BOT_ARSENAL_ENABLED:-false}
+      BOT_ARSENAL_API_URL: ${BOT_ARSENAL_API_URL:-http://sd60-arsenal-publisher:3000}
+      BOT_ARSENAL_API_TOKEN_FILE: /run/secrets/arsenal_publisher_token
+      BOT_ARSENAL_TIMEOUT_SECONDS: ${BOT_ARSENAL_TIMEOUT_SECONDS:-8}
+      BOT_ARSENAL_PROFILES: ${BOT_ARSENAL_PROFILES:-sd60-default}
+    secrets:
+      - arsenal_publisher_token
+    networks:
+      - default
+      - sd60-arsenal-admin
+
+networks:
+  sd60-arsenal-admin:
+    external: true
+    name: sd60-arsenal-admin
+
+secrets:
+  arsenal_publisher_token:
+    file: ${BOT_ARSENAL_TOKEN_SOURCE:-./bot/secrets/publisher_api_token.example}

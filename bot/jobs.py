@@ -1,6 +1,7 @@
 """Serialized host operations and durable audit/status records for a single bot."""
 
 import asyncio
+from dataclasses import dataclass
 import logging
 import sqlite3
 from pathlib import Path
@@ -12,6 +13,17 @@ import utils
 from presentation import job_embed, parse_mod_summary
 
 log = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class ArsenalDraft:
+    profile: str
+    guild_id: int
+    base_revision: int
+    version: int
+    content_json: str
+    updated_by: int
+    updated_at: str
 
 
 class JobStore:
@@ -35,6 +47,15 @@ class JobStore:
                 guild_id TEXT NOT NULL, profile TEXT NOT NULL,
                 channel_id TEXT NOT NULL, message_id TEXT NOT NULL,
                 PRIMARY KEY (guild_id, profile)
+            );
+            CREATE TABLE IF NOT EXISTS arsenal_drafts (
+                profile TEXT PRIMARY KEY,
+                guild_id TEXT NOT NULL,
+                base_revision INTEGER NOT NULL CHECK(base_revision > 0),
+                version INTEGER NOT NULL CHECK(version > 0),
+                content_json TEXT NOT NULL,
+                updated_by TEXT NOT NULL,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
         """)
         # A host-side process may outlive SSH/bot termination. Never replay it.
@@ -84,6 +105,69 @@ class JobStore:
         self.db.execute("DELETE FROM control_panels WHERE guild_id=? AND profile=? AND message_id=?",
                         (str(guild), profile, str(message)))
         self.db.commit()
+
+    def arsenal_draft(self, profile: str) -> ArsenalDraft | None:
+        row = self.db.execute(
+            "SELECT profile,guild_id,base_revision,version,content_json,updated_by,updated_at "
+            "FROM arsenal_drafts WHERE profile=?",
+            (profile,),
+        ).fetchone()
+        if row is None:
+            return None
+        return ArsenalDraft(
+            profile=row[0], guild_id=int(row[1]), base_revision=row[2], version=row[3],
+            content_json=row[4], updated_by=int(row[5]), updated_at=row[6],
+        )
+
+    def save_arsenal_draft(
+        self,
+        profile: str,
+        guild: int,
+        base_revision: int,
+        content_json: str,
+        updated_by: int,
+        *,
+        expected_version: int | None,
+    ) -> ArsenalDraft | None:
+        self.db.execute("BEGIN IMMEDIATE")
+        try:
+            row = self.db.execute(
+                "SELECT version FROM arsenal_drafts WHERE profile=?", (profile,)
+            ).fetchone()
+            if row is None:
+                if expected_version is not None:
+                    self.db.rollback()
+                    return None
+                version = 1
+                self.db.execute(
+                    "INSERT INTO arsenal_drafts "
+                    "(profile,guild_id,base_revision,version,content_json,updated_by) "
+                    "VALUES(?,?,?,?,?,?)",
+                    (profile, str(guild), base_revision, version, content_json, str(updated_by)),
+                )
+            else:
+                if expected_version is None or row[0] != expected_version:
+                    self.db.rollback()
+                    return None
+                version = row[0] + 1
+                self.db.execute(
+                    "UPDATE arsenal_drafts SET guild_id=?,base_revision=?,version=?,content_json=?,"
+                    "updated_by=?,updated_at=CURRENT_TIMESTAMP WHERE profile=?",
+                    (str(guild), base_revision, version, content_json, str(updated_by), profile),
+                )
+            self.db.commit()
+        except Exception:
+            self.db.rollback()
+            raise
+        return self.arsenal_draft(profile)
+
+    def remove_arsenal_draft(self, profile: str, *, expected_version: int) -> bool:
+        cursor = self.db.execute(
+            "DELETE FROM arsenal_drafts WHERE profile=? AND version=?",
+            (profile, expected_version),
+        )
+        self.db.commit()
+        return cursor.rowcount == 1
 
 
 class JobRunner:

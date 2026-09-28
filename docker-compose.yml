@@ -3,6 +3,22 @@ services:
     build: ./bot
     container_name: arma3-discord-bot
     restart: unless-stopped
+    read_only: true
+    init: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /tmp:size=32m,noexec,nosuid,nodev
+    pids_limit: 100
+    mem_limit: 256m
+    cpus: 0.75
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
     volumes:
       # Config (read-only inside the container)
       - ./.env:/app/.env:ro

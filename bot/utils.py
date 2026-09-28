@@ -40,6 +40,41 @@ async def require_access(interaction: discord.Interaction, action: str, profile:
     return False
 
 
+def can_access_arsenal(interaction: discord.Interaction, action: str, profile: str) -> bool:
+    if not valid_profile(profile) or not isinstance(interaction.user, discord.Member):
+        return False
+    if config.ACCESS_POLICY:
+        return config.ACCESS_POLICY.allows_arsenal(
+            interaction.guild_id,
+            interaction.user.id,
+            {role.id for role in interaction.user.roles},
+            action,
+            profile,
+        )
+    return has_admin_auth(interaction)
+
+
+async def require_arsenal_access(
+    interaction: discord.Interaction,
+    action: str,
+    profile: str,
+) -> bool:
+    if can_access_arsenal(interaction, action, profile):
+        return True
+    log.warning(
+        "Denied arsenal action=%s guild=%s user=%s profile=%r",
+        action,
+        interaction.guild_id,
+        interaction.user.id,
+        profile,
+    )
+    await interaction.response.send_message(
+        "You do not have access to this arsenal profile/action.",
+        ephemeral=True,
+    )
+    return False
+
+
 def has_any_access(interaction: discord.Interaction) -> bool:
     if config.ACCESS_POLICY:
         return any(can_access(interaction, "list", profile)

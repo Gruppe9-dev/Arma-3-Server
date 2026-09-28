@@ -36,6 +36,8 @@ COGS = [
     "cogs.mods",
     "cogs.automation",
 ]
+if config.ARSENAL_ENABLED:
+    COGS.append("cogs.arsenal")
 
 
 class ArmaBot(commands.Bot):

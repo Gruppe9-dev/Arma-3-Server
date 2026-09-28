@@ -6,6 +6,7 @@ from pathlib import Path
 
 PROFILE_RE = re.compile(r"[a-z0-9][a-z0-9_-]{0,63}\Z")
 INSTANCE_ACTIONS = frozenset({"start", "stop", "restart", "preset", "status", "list"})
+ARSENAL_ACTIONS = frozenset({"view", "edit", "publish"})
 
 
 def valid_profile(value: str) -> bool:
@@ -32,6 +33,7 @@ class AccessPolicy:
         if not isinstance(guilds, dict) or not guilds:
             raise ValueError("Configure at least one allowed guild")
         self.guilds: dict[int, dict[str, dict[str, frozenset[int]]]] = {}
+        self.arsenal_profiles: dict[int, dict[str, dict[str, frozenset[int]]]] = {}
         for guild_id, guild in guilds.items():
             parsed_id = next(iter(_ids([guild_id])))
             if not isinstance(guild, dict) or not isinstance(guild.get("profiles"), dict):
@@ -45,6 +47,22 @@ class AccessPolicy:
                     raise ValueError("Unknown access rule field")
                 profiles[profile] = {key: _ids(grants.get(key, [])) for key in supported}
             self.guilds[parsed_id] = profiles
+            arsenal_profiles = {}
+            raw_arsenal_profiles = guild.get("arsenal_profiles", {})
+            if not isinstance(raw_arsenal_profiles, dict):
+                raise ValueError("arsenal_profiles must be an object")
+            for profile, grants in raw_arsenal_profiles.items():
+                if not valid_profile(profile) or not isinstance(grants, dict):
+                    raise ValueError("Invalid arsenal profile access rule")
+                supported = {
+                    "editor_user_ids", "editor_role_ids",
+                    "publisher_user_ids", "publisher_role_ids",
+                    "viewer_user_ids", "viewer_role_ids",
+                }
+                if set(grants) - supported:
+                    raise ValueError("Unknown arsenal access rule field")
+                arsenal_profiles[profile] = {key: _ids(grants.get(key, [])) for key in supported}
+            self.arsenal_profiles[parsed_id] = arsenal_profiles
 
     @classmethod
     def load(cls, path: str):
@@ -70,3 +88,28 @@ class AccessPolicy:
         operator = user_id in rule["operator_user_ids"] or bool(roles & rule["operator_role_ids"])
         viewer = user_id in rule["viewer_user_ids"] or bool(roles & rule["viewer_role_ids"])
         return operator or (action in {"status", "list"} and viewer)
+
+    def allows_arsenal(
+        self,
+        guild_id: int | None,
+        user_id: int,
+        roles: set[int],
+        action: str,
+        profile: str,
+    ) -> bool:
+        if (guild_id not in self.arsenal_profiles or not valid_profile(profile)
+                or action not in ARSENAL_ACTIONS):
+            return False
+        rule = self.arsenal_profiles[guild_id].get(profile)
+        if rule is None:
+            return False
+        if self.is_owner(guild_id, user_id):
+            return True
+        editor = user_id in rule["editor_user_ids"] or bool(roles & rule["editor_role_ids"])
+        publisher = user_id in rule["publisher_user_ids"] or bool(roles & rule["publisher_role_ids"])
+        viewer = user_id in rule["viewer_user_ids"] or bool(roles & rule["viewer_role_ids"])
+        if action == "edit":
+            return editor
+        if action == "publish":
+            return publisher
+        return editor or publisher or viewer

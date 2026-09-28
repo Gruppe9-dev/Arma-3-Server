@@ -14,6 +14,7 @@ __pycache__/
 logs/
 data/
 ssh/
+secrets/
 
 # Setup scripts — only needed on the host, not inside the container
 setup-ssh-key.ps1

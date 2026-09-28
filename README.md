@@ -193,6 +193,10 @@ docker compose logs -f arma-bot
 | `/server preset profile preset` | Select an approved preset while stopped |
 | `/server update` | Owner: update the idle shared engine |
 | `/mods sync`, `/mods update`, `/mods import-preset` | Owner: shared content management |
+| `/arsenal status`, `/arsenal diff` | View the active SD60 revision and draft |
+| `/arsenal items ...`, `/arsenal kits ...` | Editors: build a validated persistent draft |
+| `/arsenal discard` | Editors: discard an unpublished draft |
+| `/arsenal publish` | Publishers: confirm a new immutable revision |
 
 Operators cannot modify host paths, arbitrary startup arguments, Workshop content
 or another guild's instances. Status panels and operation history are persisted
@@ -251,6 +255,14 @@ Unavailable Workshop items remain update failures unless explicitly excluded by
 the owner. Other eligible mods are still processed; an incomplete run never
 reports that everything is current. Bot log summaries prioritize diagnostics
 and suppress repetitive `Current:` lines.
+
+### SD60 Arsenal publishing
+
+Arsenal publishing is disabled by default. It uses the optional
+`docker-compose.arsenal.yml` override, a dedicated file-mounted token, and the
+private `sd60-arsenal-admin` Docker network. The bot never receives a PostgreSQL
+password or the Arma read token. Configure guild-scoped `arsenal_profiles`, then
+follow [SD60 Arsenal Discord workflow](docs/discord-arsenal.md).
 
 ## SFTP and operations
 
