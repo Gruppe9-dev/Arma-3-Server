@@ -160,7 +160,21 @@ class ArsenalCog(commands.Cog):
             raise ArsenalValidationError("The attachment must be between 1 byte and 512 KiB.")
         if PurePath(attachment.filename).suffix.lower() not in {".json", ".txt"}:
             raise ArsenalValidationError("Only JSON or TXT attachments are accepted.")
-        payload = await attachment.read(use_cached=True)
+        try:
+            payload = await attachment.read(use_cached=False)
+        except discord.HTTPException as direct_error:
+            try:
+                payload = await attachment.read(use_cached=True)
+            except discord.HTTPException as cached_error:
+                log.warning(
+                    "Discord attachment download failed attachment_id=%s size=%s "
+                    "direct_status=%s cached_status=%s",
+                    getattr(attachment, "id", "unknown"),
+                    attachment.size,
+                    getattr(direct_error, "status", "unknown"),
+                    getattr(cached_error, "status", "unknown"),
+                )
+                raise cached_error from direct_error
         if len(payload) != attachment.size or len(payload) > MAX_IMPORT_BYTES:
             raise ArsenalValidationError("The attachment size changed or exceeds 512 KiB.")
         return payload
@@ -317,7 +331,11 @@ class ArsenalCog(commands.Cog):
             raw = await self._read_input(data, attachment)
             imported, duplicates = parse_item_payload(raw)
         except (ArsenalValidationError, discord.HTTPException) as exc:
-            message = str(exc) if isinstance(exc, ArsenalValidationError) else "The attachment could not be downloaded."
+            message = (
+                str(exc)
+                if isinstance(exc, ArsenalValidationError)
+                else "The attachment could not be downloaded from Discord. Upload it again and retry."
+            )
             await interaction.edit_original_response(content=message)
             return
 
@@ -363,7 +381,11 @@ class ArsenalCog(commands.Cog):
             raw = await self._read_input(data, attachment)
             loadout = parse_loadout_payload(raw)
         except (ArsenalValidationError, discord.HTTPException) as exc:
-            message = str(exc) if isinstance(exc, ArsenalValidationError) else "The attachment could not be downloaded."
+            message = (
+                str(exc)
+                if isinstance(exc, ArsenalValidationError)
+                else "The attachment could not be downloaded from Discord. Upload it again and retry."
+            )
             await interaction.edit_original_response(content=message)
             return
 

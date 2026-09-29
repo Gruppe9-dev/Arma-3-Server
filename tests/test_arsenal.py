@@ -7,7 +7,9 @@ import sys
 import tempfile
 from types import SimpleNamespace
 import unittest
-from unittest.mock import patch
+from unittest.mock import AsyncMock, call, patch
+
+import discord
 
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "bot"))
@@ -119,6 +121,41 @@ class ArsenalCommandRegistrationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             {command.name for command in root_commands["kits"].commands},
             {"import", "remove"},
+        )
+
+    async def test_attachment_import_prefers_the_direct_discord_url(self):
+        payload = b'["ItemMap"]'
+        attachment = SimpleNamespace(
+            id=123,
+            filename="allowed-items.json",
+            size=len(payload),
+            read=AsyncMock(return_value=payload),
+        )
+
+        result = await ArsenalCog._read_input(None, attachment)
+
+        self.assertEqual(result, payload)
+        self.assertEqual(attachment.read.await_args_list, [call(use_cached=False)])
+
+    async def test_attachment_import_falls_back_to_the_discord_proxy(self):
+        payload = b'["ItemMap"]'
+        response = SimpleNamespace(status=404, reason="Not Found")
+        attachment = SimpleNamespace(
+            id=123,
+            filename="allowed-items.json",
+            size=len(payload),
+            read=AsyncMock(side_effect=[
+                discord.NotFound(response, {"message": "Unknown attachment", "code": 10008}),
+                payload,
+            ]),
+        )
+
+        result = await ArsenalCog._read_input(None, attachment)
+
+        self.assertEqual(result, payload)
+        self.assertEqual(
+            attachment.read.await_args_list,
+            [call(use_cached=False), call(use_cached=True)],
         )
 
 
