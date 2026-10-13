@@ -246,6 +246,21 @@ record and retries. Offline cards pause polling; Start, Refresh, `/server status
 or a bot restart trigger another check. Starts performed outside the bot require
 Refresh or `/server status` to resume live updates.
 
+Panels for the same instance share an in-flight host/A2S read and a five-second
+snapshot cache. Refreshes after host actions invalidate the cache. SSH handshakes
+are serialized across status, maintenance, and uploads, with at most two retries
+for transient connection-setup failures. Established commands run independently;
+a lost mutating command is never automatically replayed. Read-only status queries
+may retry one transport failure within their overall 30-second timeout.
+
+When a refresh fails, panels keep the last confirmed stats with the original
+timestamp and an orange **Status refresh delayed** warning. These values are
+explicitly historical; a failure is not evidence that Arma stopped. Start/Stop
+buttons are disabled while the current status is unknown, and Refresh remains
+available. A cold start without a successful snapshot still shows **Status
+unavailable**. Successful queries restore the normal panel automatically. SSH
+diagnostics distinguish connection-setup failures from command-execution losses.
+
 Automatic updates are disabled by default. Set `BOT_AUTO_UPDATE_ENABLED=true`
 only when unattended Steam credentials and a maintenance policy are ready.
 The updater waits for an idle host, updates `SERVER_UPDATE_BRANCH`, then Workshop

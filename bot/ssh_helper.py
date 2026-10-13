@@ -1,14 +1,17 @@
 """
 SSH / SFTP helpers for communicating with the Windows host.
 
-All functions open a fresh connection per call — this keeps things simple and
-avoids stale connection issues for a low-frequency management bot.
+Each call uses a fresh connection. Handshakes are serialized to avoid bursts
+against Windows OpenSSH; commands run independently after authentication.
 """
 
 import base64
+import asyncio
+from contextlib import asynccontextmanager
 import logging
 import json
 import re
+import time
 from pathlib import Path
 
 import asyncssh
@@ -18,6 +21,7 @@ import config
 log = logging.getLogger(__name__)
 
 _ssh_key: asyncssh.SSHKey | None = None
+_connect_lock = asyncio.Lock()
 
 
 def _get_key() -> asyncssh.SSHKey:
@@ -37,7 +41,28 @@ def _connection_params() -> dict:
         known_hosts=config.SSH_KNOWN_HOSTS,
         connect_timeout=15,
         login_timeout=15,
+        keepalive_interval=30,
+        keepalive_count_max=3,
     )
+
+
+@asynccontextmanager
+async def _connect():
+    """Retry only handshakes: no remote command has been submitted yet."""
+    parameters = _connection_params()
+    async with _connect_lock:
+        for attempt in range(3):
+            try:
+                conn = await asyncssh.connect(**parameters)
+                break
+            except (asyncssh.ConnectionLost, OSError, TimeoutError) as exc:
+                if attempt == 2:
+                    raise
+                log.warning("SSH handshake failed (%s), retry %d/2: %s", type(exc).__name__, attempt + 1, exc)
+                await asyncio.sleep(0.5 * (attempt + 1))
+    # Holding the handshake lock during an update could block status for hours.
+    async with conn:
+        yield conn
 
 
 # ── Command execution ──────────────────────────────────────────────────────────
@@ -110,11 +135,14 @@ async def run_ps_command(ps_code: str) -> tuple[int, str]:
 async def _exec(cmd: str) -> tuple[int, str]:
     if not Path(config.SSH_KNOWN_HOSTS).is_file():
         return 1, "SSH host key file is missing. Run setup/Export-SshHostKey.ps1 on the dedicated host."
+    started = time.monotonic()
+    phase = "connection setup"
     try:
-        async with asyncssh.connect(**_connection_params()) as conn:
+        async with _connect() as conn:
+            phase = "command execution"
             result = await conn.run(cmd, check=False, timeout=config.SSH_TIMEOUT_SECONDS)
     except (asyncssh.Error, OSError, TimeoutError) as exc:
-        log.error("SSH error: %s", exc)
+        log.error("SSH %s failed after %.2fs (%s): %s", phase, time.monotonic() - started, type(exc).__name__, exc)
         return 255, "SSH connection failed or timed out. The host operation may still be running; check status before retrying."
 
     output = ((result.stdout or "") + (result.stderr or "")).strip()
@@ -136,7 +164,7 @@ async def upload_bytes(data: bytes, remote_path: str) -> None:
     log.info("SFTP upload → %s", sftp_path)
 
     try:
-        async with asyncssh.connect(**_connection_params()) as conn:
+        async with _connect() as conn:
             async with conn.start_sftp_client() as sftp:
                 try:
                     await sftp.makedirs(parent, exist_ok=True)

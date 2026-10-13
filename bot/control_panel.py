@@ -9,10 +9,11 @@ class ServerControlView(discord.ui.View):
         self.cog = cog
         self.guild_id = guild_id
         self.profile = profile
+        self.set_state(None)
 
     def set_state(self, running: bool | None, *, busy: bool = False):
-        self.start.disabled = busy or running is True
-        self.stop_server.disabled = busy or running is False
+        self.start.disabled = busy or running is not False
+        self.stop_server.disabled = busy or running is not True
 
     @discord.ui.button(label="Start", emoji="▶️", style=discord.ButtonStyle.success,
                        custom_id="arma:server-control:start:v1")

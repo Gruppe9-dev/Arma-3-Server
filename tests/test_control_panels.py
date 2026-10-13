@@ -203,7 +203,7 @@ class ControlPanelTests(unittest.IsolatedAsyncioTestCase):
         self.message.edit.side_effect = edit
         with patch.object(self.cog, "_snapshot", side_effect=[(discord.Embed(), True), RuntimeError("offline host"), (discord.Embed(), False)]), patch("cogs.server.asyncio.sleep", new_callable=AsyncMock):
             await self.cog._panel_loop(10, "main", 11, 12, control=True)
-        self.assertEqual(states, [(True, False), (False, False), (False, True)])
+        self.assertEqual(states, [(True, False), (True, True), (False, True)])
 
     async def test_forbidden_is_retried_without_forgetting_persistent_message(self):
         self.store.save_control_panel(10, "main", 11, 12)

@@ -37,6 +37,12 @@ class ServerCog(commands.Cog):
         self._control_busy = set()
         self._control_refresh_times = {}
         self._panel_lock = asyncio.Lock()
+        self._snapshot_tasks = {}
+        self._snapshot_inflight = set()
+        self._snapshot_cache = {}
+        self._last_snapshots = {}
+        self._snapshot_errors = {}
+        self._snapshot_epochs = {}
 
     async def cog_load(self):
         # Register callbacks before the gateway becomes ready. The IDs in SQLite
@@ -47,7 +53,7 @@ class ServerCog(commands.Cog):
         self._restore_task = asyncio.create_task(self._restore_panels())
 
     async def cog_unload(self):
-        tasks = list(self._tasks.values()) + list(self._control_tasks.values()) + ([self._restore_task] if self._restore_task else [])
+        tasks = list(self._tasks.values()) + list(self._control_tasks.values()) + list(self._snapshot_inflight) + ([self._restore_task] if self._restore_task else [])
         for task in tasks:
             task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
@@ -75,13 +81,23 @@ class ServerCog(commands.Cog):
 
     async def _status(self, profile=None):
         parameters = {"Profile": profile} if profile else {}
+
+        async def query():
+            # This script is read-only. Retrying a transport failure after command
+            # submission is safe here, unlike Start/Stop/Update operations.
+            for attempt in range(2):
+                code, output = await ssh_helper.run_ps_file("scripts/Get-ServerStatus.ps1", **parameters)
+                if code != 255 or attempt == 1:
+                    return code, output
+                log.warning("Status transport failed for %s; retrying the read-only query once", profile or "catalog")
+                await asyncio.sleep(0.5)
+
         try:
-            code, output = await asyncio.wait_for(
-                ssh_helper.run_ps_file("scripts/Get-ServerStatus.ps1", **parameters), timeout=30,
-            )
+            code, output = await asyncio.wait_for(query(), timeout=30)
         except TimeoutError as exc:
             raise RuntimeError("Host status timed out") from exc
         if code:
+            log.warning("Host status failed for %s (exit=%s): %s", profile or "catalog", code, ssh_helper.filter_output(output, 8))
             raise RuntimeError("Host status is unavailable")
         for line in output.splitlines():
             if line.startswith("INSTANCE_JSON="):
@@ -126,6 +142,44 @@ class ServerCog(commands.Cog):
         return embed
 
     async def _snapshot(self, profile):
+        now = time.monotonic()
+        cached = self._snapshot_cache.get(profile)
+        if cached and now - cached[0] < 5:
+            return cached[1].copy(), cached[2]
+        failed = self._snapshot_errors.get(profile)
+        if failed and now - failed[0] < 3:
+            raise RuntimeError("Host status is temporarily unavailable") from failed[1]
+        task = self._snapshot_tasks.get(profile)
+        if task is None:
+            epoch = self._snapshot_epochs.get(profile, 0)
+            task = asyncio.create_task(self._read_snapshot(profile))
+            self._snapshot_tasks[profile] = task
+            self._snapshot_inflight.add(task)
+
+            def completed(done):
+                self._snapshot_inflight.discard(done)
+                if self._snapshot_tasks.get(profile) is done:
+                    self._snapshot_tasks.pop(profile, None)
+                if done.cancelled():
+                    return
+                error = done.exception()  # Observe failures even if all panels were cancelled.
+                if self._snapshot_epochs.get(profile, 0) != epoch:
+                    return
+                if error is not None:
+                    self._snapshot_errors[profile] = (time.monotonic(), error)
+                else:
+                    embed, running = done.result()
+                    self._snapshot_cache[profile] = (time.monotonic(), embed, running)
+                    self._last_snapshots[profile] = embed
+                    self._snapshot_errors.pop(profile, None)
+
+            task.add_done_callback(completed)
+        # Refreshing/cancelling one guild's panel must not cancel the shared read
+        # which another guild's panel is still waiting for.
+        embed, running = await asyncio.shield(task)
+        return embed.copy(), running
+
+    async def _read_snapshot(self, profile):
         status = (await self._status(profile))[0]
         running = status["Running"]
         info = None
@@ -135,6 +189,18 @@ class ServerCog(commands.Cog):
             except Exception as exc:
                 log.debug("A2S unavailable for %s: %s", profile, exc)
         return status_embed(profile, status, info), running
+
+    def _delayed_snapshot(self, profile):
+        previous = self._last_snapshots.get(profile)
+        if previous is None:
+            return discord.Embed(title=f"{profile} — Status unavailable", description="The host could not be queried. This does not mean the game server is offline.", color=discord.Color.orange())
+        embed = previous.copy()
+        embed.title = f"⚠️ Status refresh delayed — {profile}"
+        embed.color = discord.Color.orange()
+        timestamp = f"<t:{int(previous.timestamp.timestamp())}:R>" if previous.timestamp else "at the previous successful check"
+        embed.description = f"Showing the last confirmed stats from {timestamp}. The current server state is unknown; retrying automatically."
+        embed.set_footer(text="Last confirmed data • Not a live status • Retrying automatically")
+        return embed
 
     async def _panel_loop(self, guild_id, profile, channel_id, message_id, *, control=False):
         misses = 0
@@ -151,10 +217,10 @@ class ServerCog(commands.Cog):
                 try:
                     embed, running = await self._snapshot(profile)
                     misses = 0
-                except Exception:
+                except Exception as exc:
                     misses += 1
-                    log.warning("Status query failed for %s (attempt %d)", profile, misses)
-                    embed = discord.Embed(title=f"{profile} — Status unavailable", description="The host could not be queried. This does not mean the game server is offline.", color=discord.Color.orange())
+                    log.warning("Status query failed for %s (attempt %d, %s): %s", profile, misses, type(exc).__name__, exc)
+                    embed = self._delayed_snapshot(profile)
                 if control:
                     view = self._control_views.get((guild_id, profile))
                     if view is None:
@@ -231,6 +297,12 @@ class ServerCog(commands.Cog):
 
     def refresh_panels(self, profile, *, exclude_guild=None):
         """Resume persisted panels across authorized guilds after a host action."""
+        self._snapshot_cache.pop(profile, None)
+        self._snapshot_errors.pop(profile, None)
+        self._snapshot_epochs[profile] = self._snapshot_epochs.get(profile, 0) + 1
+        # An earlier read may predate the host action. Let its existing waiters
+        # finish, but prevent it from satisfying the new post-action refresh.
+        self._snapshot_tasks.pop(profile, None)
         resumed = set()
         for guild, saved_profile, channel, message in self.bot.store.panels():
             guild_id = int(guild)
@@ -253,7 +325,7 @@ class ServerCog(commands.Cog):
     def _control_footer(embed, running):
         embed.set_footer(text=("CPU/RAM include HCs • CPU: host capacity • Updated every 30s • Controls require instance access" if running else
                                "Offline checks paused • Use Start or Refresh • Controls require instance access" if running is False else
-                               "Status unavailable • Retrying automatically • Controls require instance access"))
+                               "Current status unknown • Retrying automatically • Controls require instance access"))
 
     async def control_action(self, interaction, guild_id, profile, action):
         saved = self.bot.store.control_panel(guild_id, profile)
