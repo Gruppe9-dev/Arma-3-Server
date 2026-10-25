@@ -149,6 +149,13 @@ names are reused. Stop the target instance and select its `default` preset befor
 importing. Server-only mods remain owner-managed; imports do not force Gruppe 9
 extensions into another community's profile.
 
+Discord operators configured in `operator_role_ids` or `operator_user_ids` may use
+`/mods import-preset` for their assigned guild/instance. Viewer roles remain
+read-only. `sync_after:true`, `/mods sync`, and `/mods update` require owner access
+because they deploy shared Workshop files. Import with `sync_after:false` and ask
+the owner to sync any missing mods. Queued imports recheck current membership and
+roles immediately before execution. No new access-policy fields are needed.
+
 ## Discord bot
 
 In an administrator PowerShell on the dedicated host, prepare the bot account
@@ -202,7 +209,8 @@ startup to fail. See [Arsenal startup troubleshooting](docs/discord-arsenal.md#d
 | `/server restart profile` | Stop and start that instance |
 | `/server preset profile preset` | Select an approved preset while stopped |
 | `/server update` | Owner: update the idle shared engine |
-| `/mods sync`, `/mods update`, `/mods import-preset` | Owner: shared content management |
+| `/mods import-preset` | Operators: import for assigned instances; `sync_after` requires owner access |
+| `/mods sync`, `/mods update` | Owner: shared content management |
 | `/arsenal status`, `/arsenal diff` | View the active SD60 revision and draft |
 | `/arsenal items ...`, `/arsenal kits ...` | Editors: build a validated persistent draft |
 | `/arsenal discard` | Editors: discard an unpublished draft |

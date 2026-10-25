@@ -305,7 +305,11 @@ Install the same bot application in both guilds. Keep the bot token on your own
 host. Each guild's `profiles` object binds only its own instances; profile IDs
 are lowercase and must match the framework folders. Owners may run shared
 maintenance in configured guilds; published instance status remains guild-bound.
-Operators can start, stop, restart, select prepared presets and view status.
+Operators can start, stop, restart, select prepared presets, import Launcher HTML
+presets for their assigned instances and view status. This uses the existing
+`operator_role_ids` / `operator_user_ids` grants. Imports require the stopped
+instance's `default` preset and preserve host-controlled metadata. Using
+`sync_after:true` still requires owner access because it deploys shared files.
 Viewers can list/view only. Discord's Administrator permission is not an implicit
 grant. Roles are fetched again before a queued operation executes.
 
@@ -349,7 +353,8 @@ the base profile and is reserved. Example:
 | `/server restart profile` | Stop/start; ends the active game session |
 | `/server preset profile preset` | Select an approved preset while stopped |
 | `/server update` | Owner-only shared Arma update, idle-only |
-| `/mods sync`, `/mods update`, `/mods import-preset` | Owner-only shared content/control changes |
+| `/mods import-preset` | Operators: assigned instances only; owner-only `sync_after` |
+| `/mods sync`, `/mods update` | Owner-only shared content changes |
 
 Stop/restart currently terminate game processes; persistent missions should save
 first. They do not implement mission-specific graceful save/RCon shutdown.

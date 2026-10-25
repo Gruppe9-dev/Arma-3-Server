@@ -5,7 +5,7 @@ import re
 from pathlib import Path
 
 PROFILE_RE = re.compile(r"[a-z0-9][a-z0-9_-]{0,63}\Z")
-INSTANCE_ACTIONS = frozenset({"start", "stop", "restart", "preset", "status", "list"})
+INSTANCE_ACTIONS = frozenset({"start", "stop", "restart", "preset", "preset-import", "status", "list"})
 ARSENAL_ACTIONS = frozenset({"view", "edit", "publish"})
 
 

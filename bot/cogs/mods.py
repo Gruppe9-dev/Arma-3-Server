@@ -1,4 +1,4 @@
-"""Owner-only changes to the shared mod inventory and trusted profile metadata."""
+"""Operator-scoped preset imports and owner-only shared Workshop maintenance."""
 
 import contextlib
 import uuid
@@ -15,7 +15,7 @@ from access import valid_profile
 
 async def allowed(interaction, profile, *, all_profiles=False):
     if not utils.has_admin_auth(interaction):
-        await interaction.response.send_message("Only the hardware owner may change shared mods or import presets.", ephemeral=True)
+        await interaction.response.send_message("Only the hardware owner may change shared Workshop files.", ephemeral=True)
         return False
     if not valid_profile(profile) and not (all_profiles and profile == "_all"):
         await interaction.response.send_message("Invalid profile ID.", ephemeral=True)
@@ -24,7 +24,7 @@ async def allowed(interaction, profile, *, all_profiles=False):
 
 
 class ModsCog(commands.Cog):
-    mods = app_commands.Group(name="mods", description="Owner: manage shared Workshop files")
+    mods = app_commands.Group(name="mods", description="Import instance presets and manage shared Workshop files")
 
     def __init__(self, bot):
         self.bot = bot
@@ -52,9 +52,16 @@ class ModsCog(commands.Cog):
                 else:
                     server.refresh_panels(profile)
 
-    @mods.command(name="import-preset", description="Owner: import a Launcher HTML preset into trusted profile metadata")
+    @mods.command(name="import-preset", description="Operator: import a Launcher HTML preset for an assigned instance")
     async def mods_import_preset(self, interaction: discord.Interaction, profile: str, preset_html: discord.Attachment, merge: bool = False, sync_after: bool = False):
-        if not await allowed(interaction, profile):
+        if not await utils.require_access(interaction, "preset-import", profile):
+            return
+        if sync_after and not utils.has_admin_auth(interaction):
+            await interaction.response.send_message(
+                "Preset import is allowed, but sync_after requires hardware-owner access. "
+                "Import with sync_after:false, then ask the owner to sync the shared mods.",
+                ephemeral=True,
+            )
             return
         if not preset_html.filename.lower().endswith(".html") or preset_html.size > 2 * 1024 * 1024:
             await interaction.response.send_message("Attach a Launcher .html preset of at most 2 MiB.", ephemeral=True)
@@ -70,7 +77,7 @@ class ModsCog(commands.Cog):
         except (discord.HTTPException, RuntimeError, ValueError):
             await interaction.edit_original_response(content="Preset upload failed. See the private bot log.")
             return
-        await self.bot.jobs.run(interaction, "preset-import", profile, "mods/Import-Preset.ps1", owner_only=True,
+        await self.bot.jobs.run(interaction, "preset-import", profile, "mods/Import-Preset.ps1", owner_only=sync_after,
                                 Profile=profile, PresetFile=remote, Merge=merge, SyncAfter=sync_after)
 
 
