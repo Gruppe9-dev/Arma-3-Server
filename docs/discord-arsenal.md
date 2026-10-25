@@ -81,5 +81,41 @@ with the integration override:
 docker compose -f docker-compose.yml -f docker-compose.arsenal.yml up -d --build arma-bot
 ```
 
+Use both `-f` options for every later bot recreation or image rebuild. Running
+`up` with only `docker-compose.yml` removes the Arsenal secret mount and private
+network from the recreated bot, even if `BOT_ARSENAL_ENABLED=true` remains set.
+
+If startup reports `Arsenal publisher token file is missing or too large`, check
+the deployment configuration before replacing credentials. The expected container
+file `/run/secrets/arsenal_publisher_token` is mounted only by this override.
+`BOT_ARSENAL_TOKEN_SOURCE` must point to the existing publisher token file on the
+host (up to 512 bytes), rather than to its parent directory. Do not print or paste
+the token contents into logs or chat. Reapply the correct mounts to an already
+built image with:
+
+```powershell
+docker compose -f docker-compose.yml -f docker-compose.arsenal.yml up -d --force-recreate arma-bot
+docker compose -f docker-compose.yml -f docker-compose.arsenal.yml logs --tail 80 arma-bot
+```
+
+The bot must use the existing publisher credential; generating an unrelated token
+would cause API authentication to fail. Restoring the mounts preserves drafts and
+server panel identities in the existing `bot/data` directory.
+
 Drafts are stored in the existing mounted `bot/data/jobs.sqlite3` and survive a
 bot rebuild. Published snapshots become active in Arma at the next mission start.
+
+## Fragmented API responses
+
+The API client reads the complete HTTP body before parsing JSON, enforcing a
+768 KiB limit across all received chunks. The same limit applies after automatic
+HTTP decompression. A single `StreamReader.read(n)` is insufficient: it may return
+only the currently buffered part of a valid response. Older bot images can
+therefore report `INVALID_RESPONSE` with an `Unterminated string` JSON error as
+the active Arsenal snapshot grows or arrives in multiple packets.
+
+Deploy the updated `bot/arsenal_client.py` and rebuild the bot with both Compose
+files as shown above. No publisher API, token or draft reset is required for this
+client fix. A failed active-snapshot read occurs before the draft mutation is
+saved. Retry the edit/import after deployment. Truly malformed or oversized
+responses still fail safely; HTTP requests are not automatically replayed.

@@ -182,6 +182,16 @@ docker compose up -d --build
 docker compose logs -f arma-bot
 ```
 
+When `BOT_ARSENAL_ENABLED=true`, every `up`/rebuild invocation must include the
+Arsenal override so Compose retains the publisher-token mount and private network:
+
+```powershell
+docker compose -f docker-compose.yml -f docker-compose.arsenal.yml up -d --build arma-bot
+```
+
+Using only the base file recreates the bot without those mounts, causing Arsenal
+startup to fail. See [Arsenal startup troubleshooting](docs/discord-arsenal.md#docker-startup).
+
 | Command | Access and behavior |
 | --- | --- |
 | `/server list` | List assigned instances |
@@ -238,8 +248,9 @@ instance per guild. Use a dedicated channel to keep these cards easy to find.
 
 Message IDs and channel/profile mappings are stored in `bot/data/jobs.sqlite3`.
 The existing `./bot/data:/app/data` mount preserves them during
-`docker compose up -d --build arma-bot`. Keep that host directory when deploying;
-the same bot account registers the saved buttons and refreshes the original messages
+`docker compose up -d --build arma-bot`. With Arsenal enabled, use both Compose
+files as shown above. Keep that host directory when deploying; the same bot
+account registers the saved buttons and refreshes the original messages
 on startup. Interrupted operations are not replayed. A deleted Discord message can
 be recreated with `/server panel`; temporary permission loss retains its database
 record and retries. Offline cards pause polling; Start, Refresh, `/server status`,

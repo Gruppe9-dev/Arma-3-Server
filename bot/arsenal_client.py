@@ -55,9 +55,14 @@ class ArsenalClient:
                 json=payload,
                 allow_redirects=False,
             ) as response:
-                raw = await response.content.read(MAX_RESPONSE_BYTES + 1)
-                if len(raw) > MAX_RESPONSE_BYTES:
-                    raise ArsenalApiError("RESPONSE_TOO_LARGE", 502)
+                # read(n) may return only the bytes currently buffered, even
+                # when more of the JSON body is still in transit. Read to EOF,
+                # enforcing the limit across all chunks (also after decompression).
+                raw = bytearray()
+                async for chunk in response.content.iter_chunked(64 * 1024):
+                    if len(raw) + len(chunk) > MAX_RESPONSE_BYTES:
+                        raise ArsenalApiError("RESPONSE_TOO_LARGE", 502)
+                    raw.extend(chunk)
                 try:
                     body = json.loads(raw.decode("utf-8"))
                 except (UnicodeDecodeError, json.JSONDecodeError) as exc:
