@@ -5,7 +5,7 @@ import re
 from pathlib import Path
 
 PROFILE_RE = re.compile(r"[a-z0-9][a-z0-9_-]{0,63}\Z")
-INSTANCE_ACTIONS = frozenset({"start", "stop", "restart", "preset", "preset-import", "status", "list"})
+INSTANCE_ACTIONS = frozenset({"start", "stop", "restart", "preset", "preset-import", "mods-sync", "mods-update", "status", "list"})
 ARSENAL_ACTIONS = frozenset({"view", "edit", "publish"})
 
 
@@ -75,7 +75,16 @@ class AccessPolicy:
     def is_owner(self, guild_id: int | None, user_id: int) -> bool:
         return guild_id in self.guilds and user_id in self.owners
 
+    def is_operator(self, guild_id: int | None, user_id: int, roles: set[int]) -> bool:
+        """Guild operators may run shared maintenance and configured Arsenal commands."""
+        if self.is_owner(guild_id, user_id):
+            return True
+        return any(user_id in rule["operator_user_ids"] or bool(roles & rule["operator_role_ids"])
+                   for rule in self.guilds.get(guild_id, {}).values())
+
     def allows(self, guild_id: int | None, user_id: int, roles: set[int], action: str, profile: str) -> bool:
+        if action == "update":
+            return profile == "" and self.is_operator(guild_id, user_id, roles)
         if guild_id not in self.guilds or not valid_profile(profile) or action not in INSTANCE_ACTIONS:
             return False
         # Bind the target to this guild even for owners, so its status cannot be
@@ -103,7 +112,7 @@ class AccessPolicy:
         rule = self.arsenal_profiles[guild_id].get(profile)
         if rule is None:
             return False
-        if self.is_owner(guild_id, user_id):
+        if self.is_operator(guild_id, user_id, roles):
             return True
         editor = user_id in rule["editor_user_ids"] or bool(roles & rule["editor_role_ids"])
         publisher = user_id in rule["publisher_user_ids"] or bool(roles & rule["publisher_role_ids"])

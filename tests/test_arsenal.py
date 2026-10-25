@@ -7,7 +7,7 @@ import sys
 import tempfile
 from types import SimpleNamespace
 import unittest
-from unittest.mock import AsyncMock, call, patch
+from unittest.mock import AsyncMock, Mock, call, patch
 
 import discord
 
@@ -65,6 +65,22 @@ def content(items=None, kits=None):
 
 
 class ArsenalAccessTests(unittest.TestCase):
+    def test_instance_operators_can_use_all_configured_arsenal_actions_in_their_guild(self):
+        payload = {
+            "schema_version": 1, "owner_user_ids": [], "guilds": {
+                "10": {"profiles": {"60th": {"operator_role_ids": ["100"], "viewer_role_ids": ["200"]}},
+                       "arsenal_profiles": {"sd60-default": {}}},
+                "20": {"profiles": {}, "arsenal_profiles": {"other": {}}},
+            },
+        }
+        policy = AccessPolicy(payload)
+        for action in ("view", "edit", "publish"):
+            self.assertTrue(policy.allows_arsenal(10, 2, {100}, action, "sd60-default"))
+            self.assertFalse(policy.allows_arsenal(10, 2, {200}, action, "sd60-default"))
+            self.assertFalse(policy.allows_arsenal(20, 2, {100}, action, "other"))
+            self.assertFalse(policy.allows_arsenal(10, 2, {100}, action, "other"))
+            self.assertFalse(policy.allows_arsenal(10, 2, {100}, action, "missing"))
+
     def test_arsenal_roles_are_profile_and_guild_scoped(self):
         policy = arsenal_policy()
         self.assertTrue(policy.allows_arsenal(10, 2, {100}, "edit", "sd60-default"))
@@ -218,6 +234,89 @@ class ArsenalDraftStoreTests(unittest.TestCase):
             self.assertTrue(second.remove_arsenal_draft("sd60-default", expected_version=1))
             self.assertIsNone(second.arsenal_draft("sd60-default"))
             second.db.close()
+
+
+class ArsenalOperatorWorkflowTests(unittest.IsolatedAsyncioTestCase):
+    async def asyncSetUp(self):
+        self.folder = tempfile.TemporaryDirectory()
+        self.store = JobStore(Path(self.folder.name) / "jobs.db")
+        self.cog = object.__new__(ArsenalCog)
+        self.cog.bot = SimpleNamespace(store=self.store)
+        self.cog._locks = {}
+        self.cog.client = SimpleNamespace(
+            get_active=AsyncMock(return_value={"revision": {"number": 1}, "arsenal": content()}),
+            publish=AsyncMock(return_value={"revision": 2, "replayed": False}),
+        )
+        rules = AccessPolicy({"schema_version": 1, "owner_user_ids": [], "guilds": {
+            "10": {"profiles": {"60th": {"operator_role_ids": ["100"]}},
+                   "arsenal_profiles": {"sd60-default": {"viewer_role_ids": ["200"]}}},
+        }})
+        self.patch = patch("cogs.arsenal.config.ACCESS_POLICY", rules)
+        self.patch.start()
+
+    async def asyncTearDown(self):
+        self.patch.stop()
+        self.store.db.close()
+        self.folder.cleanup()
+
+    @staticmethod
+    def request(roles=(100,)):
+        member = Mock(spec=discord.Member)
+        member.id = 2
+        member.roles = [SimpleNamespace(id=role) for role in roles]
+        return SimpleNamespace(
+            id=12345, user=member, guild_id=10,
+            guild=SimpleNamespace(fetch_member=AsyncMock(return_value=member)),
+            response=SimpleNamespace(defer=AsyncMock(), send_message=AsyncMock()),
+            edit_original_response=AsyncMock(),
+        )
+
+    async def preview(self):
+        request = self.request()
+        await self.cog.items_add.callback(self.cog, request, "60th", "ItemCompass")
+        await self.cog.arsenal_publish.callback(self.cog, request, "60th")
+        return request.edit_original_response.call_args.kwargs["view"]
+
+    async def test_operator_can_edit_and_confirm_publication_without_separate_arsenal_roles(self):
+        view = await self.preview()
+        request = self.request()
+        self.assertTrue(await view.interaction_check(request))
+        await view.confirm.callback(request)
+        self.cog.client.publish.assert_awaited_once()
+        args = self.cog.client.publish.call_args.args
+        self.assertEqual(args[:5], ("sd60-default", 1, "discord:12345", 10, 2))
+        self.assertIn("ItemCompass", args[5]["allowedItems"])
+        self.assertIsNone(self.store.arsenal_draft("sd60-default"))
+
+    async def test_role_revoked_after_preview_blocks_publication_and_keeps_the_draft(self):
+        view = await self.preview()
+        request = self.request()
+        request.guild.fetch_member.return_value = self.request(roles=()).user
+        await view.confirm.callback(request)
+        self.cog.client.publish.assert_not_awaited()
+        self.assertIsNotNone(self.store.arsenal_draft("sd60-default"))
+        self.assertIn("access changed", request.edit_original_response.call_args.kwargs["content"])
+
+    async def test_viewer_cannot_edit_or_request_publication(self):
+        request = self.request(roles=(200,))
+        await self.cog.items_add.callback(self.cog, request, "60th", "ItemCompass")
+        await self.cog.arsenal_publish.callback(self.cog, request, "60th")
+        self.cog.client.get_active.assert_not_awaited()
+        self.cog.client.publish.assert_not_awaited()
+        self.assertIsNone(self.store.arsenal_draft("sd60-default"))
+
+    async def test_role_revoked_during_api_read_blocks_the_publish_request(self):
+        view = await self.preview()
+        request = self.request()
+
+        async def read(profile):
+            request.guild.fetch_member.return_value = self.request(roles=()).user
+            return {"revision": {"number": 1}, "arsenal": content()}
+
+        self.cog.client.get_active.side_effect = read
+        await view.confirm.callback(request)
+        self.cog.client.publish.assert_not_awaited()
+        self.assertIsNotNone(self.store.arsenal_draft("sd60-default"))
 
 
 class ArsenalTokenTests(unittest.TestCase):

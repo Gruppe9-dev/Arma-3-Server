@@ -1,4 +1,4 @@
-"""Operator-scoped preset imports and owner-only shared Workshop maintenance."""
+"""Operator-scoped preset imports, Workshop synchronization and updates."""
 
 import contextlib
 import uuid
@@ -10,17 +10,21 @@ from discord.ext import commands
 import config
 import ssh_helper
 import utils
-from access import valid_profile
 
 
-async def allowed(interaction, profile, *, all_profiles=False):
-    if not utils.has_admin_auth(interaction):
-        await interaction.response.send_message("Only the hardware owner may change shared Workshop files.", ephemeral=True)
-        return False
-    if not valid_profile(profile) and not (all_profiles and profile == "_all"):
-        await interaction.response.send_message("Invalid profile ID.", ephemeral=True)
-        return False
-    return True
+async def targets(interaction, action, profile):
+    """Expand _all to assigned operator profiles without exposing foreign instances."""
+    if profile == "_all":
+        if utils.has_admin_auth(interaction):
+            return ["_all"]  # Owner retains the existing host-wide operation.
+        if config.ACCESS_POLICY:
+            assigned = [name for name in config.ACCESS_POLICY.guilds.get(interaction.guild_id, {})
+                        if utils.can_access(interaction, action, name)]
+            if assigned:
+                return assigned
+    if await utils.require_access(interaction, action, profile):
+        return [profile]
+    return []
 
 
 class ModsCog(commands.Cog):
@@ -29,39 +33,31 @@ class ModsCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
-    @mods.command(name="sync", description="Owner: download and deploy mods while all instances are stopped")
+    @mods.command(name="sync", description="Operator: download and deploy mods for assigned instances")
     async def mods_sync(self, interaction: discord.Interaction, profile: str, force: bool = False):
-        if await allowed(interaction, profile, all_profiles=True):
-            await self.bot.jobs.run(interaction, "mods-sync", profile, "mods/Sync-Mods.ps1", owner_only=True, Profile=profile, Force=force)
+        for target in await targets(interaction, "mods-sync", profile):
+            await self.bot.jobs.run(interaction, "mods-sync", target, "mods/Sync-Mods.ps1", owner_only=target == "_all", Profile=target, Force=force)
 
-    @mods.command(name="update", description="Owner: check or deploy Workshop updates")
+    @mods.command(name="update", description="Operator: check or deploy Workshop updates for assigned instances")
     async def mods_update(self, interaction: discord.Interaction, profile: str, restart_server: bool = False, check_only: bool = False):
-        if not await allowed(interaction, profile, all_profiles=True):
-            return
         if restart_server and (profile == "_all" or check_only):
             await interaction.response.send_message("Restart requires one concrete profile and cannot be combined with check-only.", ephemeral=True)
             return
-        code = await self.bot.jobs.run(interaction, "mods-update", profile, "mods/Sync-Mods.ps1", owner_only=True,
-                                Profile=profile, Update=True, RestartServer=restart_server, CheckOnly=check_only)
-        if restart_server:
-            server = self.bot.get_cog("ServerCog")
-            if server:
-                if code == 0:
-                    with contextlib.suppress(discord.HTTPException, RuntimeError):
-                        await server._ensure_panel(interaction, profile)
-                else:
-                    server.refresh_panels(profile)
+        for target in await targets(interaction, "mods-update", profile):
+            code = await self.bot.jobs.run(interaction, "mods-update", target, "mods/Sync-Mods.ps1", owner_only=target == "_all",
+                                          Profile=target, Update=True, RestartServer=restart_server, CheckOnly=check_only)
+            if restart_server:
+                server = self.bot.get_cog("ServerCog")
+                if server:
+                    if code == 0:
+                        with contextlib.suppress(discord.HTTPException, RuntimeError):
+                            await server._ensure_panel(interaction, target)
+                    else:
+                        server.refresh_panels(target)
 
     @mods.command(name="import-preset", description="Operator: import a Launcher HTML preset for an assigned instance")
     async def mods_import_preset(self, interaction: discord.Interaction, profile: str, preset_html: discord.Attachment, merge: bool = False, sync_after: bool = False):
         if not await utils.require_access(interaction, "preset-import", profile):
-            return
-        if sync_after and not utils.has_admin_auth(interaction):
-            await interaction.response.send_message(
-                "Preset import is allowed, but sync_after requires hardware-owner access. "
-                "Import with sync_after:false, then ask the owner to sync the shared mods.",
-                ephemeral=True,
-            )
             return
         if not preset_html.filename.lower().endswith(".html") or preset_html.size > 2 * 1024 * 1024:
             await interaction.response.send_message("Attach a Launcher .html preset of at most 2 MiB.", ephemeral=True)
@@ -77,7 +73,7 @@ class ModsCog(commands.Cog):
         except (discord.HTTPException, RuntimeError, ValueError):
             await interaction.edit_original_response(content="Preset upload failed. See the private bot log.")
             return
-        await self.bot.jobs.run(interaction, "preset-import", profile, "mods/Import-Preset.ps1", owner_only=sync_after,
+        await self.bot.jobs.run(interaction, "preset-import", profile, "mods/Import-Preset.ps1",
                                 Profile=profile, PresetFile=remote, Merge=merge, SyncAfter=sync_after)
 
 

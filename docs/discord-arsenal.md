@@ -24,8 +24,15 @@ Add an `arsenal_profiles` object to the applicable guild in
 }
 ```
 
-Owners may view, edit, and publish configured profiles. Editors may change the
-draft. Publishers may confirm publication. Viewers may inspect status and diff.
+Owners and instance operators may view, edit, discard, and publish Arsenal profiles
+configured in their current Discord guild. The operator grant comes from any
+instance's existing `operator_role_ids` / `operator_user_ids` in that guild; no
+duplicate Arsenal editor/publisher grant is required. The target Arsenal profile
+must still appear in that guild's `arsenal_profiles` object. Operator access does
+not cross guild boundaries. Instance Viewer roles do not gain mutation rights.
+
+Separate Arsenal-only grants remain available: editors may change the draft,
+publishers may confirm publication, and viewers may inspect status and diff.
 Permissions are fetched again immediately before a draft mutation, discard, or
 publication.
 

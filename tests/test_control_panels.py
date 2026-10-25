@@ -222,17 +222,18 @@ class ControlPanelTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn((10, "main"), self.cog._control_views)
 
     async def test_command_validates_permissions_all_profiles_and_channel_before_publication(self):
-        for profiles, user, roles, manage in [("main,friend", 1, (), True), ("main", 3, (), True),
+        for profiles, user, roles, can_post in [("main,friend", 1, (), True), ("main", 3, (), True),
                                              ("main", 2, (100,), False), ("../main", 1, (), True)]:
-            self.permissions.manage_channels = manage
+            self.permissions.send_messages = can_post
             request = self.request(user, roles=roles)
-            with self.subTest(profiles=profiles, user=user, manage=manage), patch.object(self.cog, "_publish_control", new_callable=AsyncMock) as publish, patch.object(self.cog, "_status", new_callable=AsyncMock) as status:
+            with self.subTest(profiles=profiles, user=user, can_post=can_post), patch.object(self.cog, "_publish_control", new_callable=AsyncMock) as publish, patch.object(self.cog, "_status", new_callable=AsyncMock) as status:
                 await self.cog.server_panel.callback(self.cog, request, self.channel, profiles)
                 publish.assert_not_awaited()
                 status.assert_not_awaited()
                 request.response.send_message.assert_awaited_once()
 
     async def test_command_deduplicates_and_publishes_approved_profiles(self):
+        self.permissions.manage_channels = False
         with patch.object(self.cog, "_status", return_value=[{"Profile": "main"}]), patch.object(self.cog, "_publish_control", return_value="https://discord.test/panel") as publish:
             await self.cog.server_panel.callback(self.cog, self.request(), self.channel, "main, main")
         publish.assert_awaited_once_with(10, "main", self.channel)

@@ -22,7 +22,9 @@ def has_admin_auth(interaction: discord.Interaction) -> bool:
 
 
 def can_access(interaction: discord.Interaction, action: str, profile: str) -> bool:
-    if not valid_profile(profile) or not isinstance(interaction.user, discord.Member):
+    if not isinstance(interaction.user, discord.Member):
+        return False
+    if not valid_profile(profile) and not (action == "update" and profile == ""):
         return False
     if config.ACCESS_POLICY:
         return config.ACCESS_POLICY.allows(

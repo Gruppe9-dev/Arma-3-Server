@@ -513,6 +513,10 @@ class ArsenalCog(commands.Cog):
                 active = await self.client.get_active(profile)
                 if active["revision"]["number"] != stored.base_revision:
                     return "The active revision changed. Nothing was published; discard the stale draft."
+                # The API read may have waited several seconds after the first
+                # permission check. Recheck roles before sending the mutation.
+                if not await self._reauthorize(interaction, "publish", profile):
+                    return "Your publish access changed. Nothing was published."
                 content = content_from_json(stored.content_json)
                 result = await self.client.publish(
                     profile,

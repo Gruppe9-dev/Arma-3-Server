@@ -303,13 +303,17 @@ BOT_ACCESS_CONFIG=/app/config/access.json
 
 Install the same bot application in both guilds. Keep the bot token on your own
 host. Each guild's `profiles` object binds only its own instances; profile IDs
-are lowercase and must match the framework folders. Owners may run shared
-maintenance in configured guilds; published instance status remains guild-bound.
+are lowercase and must match the framework folders. Operators and owners may run
+shared engine maintenance in configured guilds; published instance status remains guild-bound.
 Operators can start, stop, restart, select prepared presets, import Launcher HTML
-presets for their assigned instances and view status. This uses the existing
-`operator_role_ids` / `operator_user_ids` grants. Imports require the stopped
-instance's `default` preset and preserve host-controlled metadata. Using
-`sync_after:true` still requires owner access because it deploys shared files.
+presets, sync/update mods for their assigned instances and view status. This uses
+the existing `operator_role_ids` / `operator_user_ids` grants. Imports require the
+stopped instance's `default` preset and preserve host-controlled metadata.
+`sync_after:true` is available to operators. `_all` for sync/update expands to the
+operator's authorized instances in the current guild; owners can still target all
+host profiles. Any instance operator in a configured guild may run `/server update`
+and use all Arsenal commands for Arsenal profiles explicitly configured in that
+guild. Shared-file operations still require the applicable host idle checks/locks.
 Viewers can list/view only. Discord's Administrator permission is not an implicit
 grant. Roles are fetched again before a queued operation executes.
 
@@ -347,14 +351,14 @@ the base profile and is reserved. Example:
 | --- | --- |
 | `/server list` | List only assigned instances |
 | `/server status profile` | Instance CPU/RAM, process state, A2S and RPT fallback |
-| `/server panel channel profiles` | Fixed stats/buttons for approved instances; operator + target-channel management or owner |
+| `/server panel channel profiles` | Operators: fixed stats/buttons for assigned instances, in channels where they can post |
 | `/server start profile` | Validate, deploy snapshots, start server and HCs |
 | `/server stop profile` | Terminate only verified instance processes |
 | `/server restart profile` | Stop/start; ends the active game session |
 | `/server preset profile preset` | Select an approved preset while stopped |
-| `/server update` | Owner-only shared Arma update, idle-only |
-| `/mods import-preset` | Operators: assigned instances only; owner-only `sync_after` |
-| `/mods sync`, `/mods update` | Owner-only shared content changes |
+| `/server update` | Operators: shared Arma update, idle-only |
+| `/mods import-preset` | Operators: assigned instances, including `sync_after` |
+| `/mods sync`, `/mods update` | Operators: assigned instances; `_all` expands to authorized profiles |
 
 Stop/restart currently terminate game processes; persistent missions should save
 first. They do not implement mission-specific graceful save/RCon shutdown.

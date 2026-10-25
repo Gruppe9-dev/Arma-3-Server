@@ -409,8 +409,8 @@ class ServerCog(commands.Cog):
             return
         user_permissions = channel.permissions_for(interaction.user)
         bot_permissions = channel.permissions_for(interaction.guild.me)
-        if not user_permissions.view_channel or not (utils.has_admin_auth(interaction) or user_permissions.manage_channels):
-            await interaction.response.send_message("Creating or moving panels requires Manage Channels in the target channel, or hardware-owner access.", ephemeral=True)
+        if not user_permissions.view_channel or not user_permissions.send_messages:
+            await interaction.response.send_message("You need View Channel and Send Messages in the target channel to publish panels.", ephemeral=True)
             return
         if not all((bot_permissions.view_channel, bot_permissions.send_messages, bot_permissions.embed_links)):
             await interaction.response.send_message("The bot needs View Channel, Send Messages and Embed Links in the target channel.", ephemeral=True)
@@ -428,7 +428,7 @@ class ServerCog(commands.Cog):
                 permissions = channel.permissions_for(interaction.user)
                 if (any(not utils.can_access(interaction, "start", name) for name in names) or
                         not permissions.view_channel or
-                        not (utils.has_admin_auth(interaction) or permissions.manage_channels)):
+                        not permissions.send_messages):
                     await interaction.edit_original_response(content="Your access changed while panel setup was waiting. No panels were published.")
                     return
                 for name in names:
@@ -500,12 +500,11 @@ class ServerCog(commands.Cog):
             await self.bot.jobs.run(interaction, "preset", profile, "scripts/Set-InstancePreset.ps1", Profile=profile, Preset=preset)
             self._catalog_time = 0
 
-    @server.command(name="update", description="Owner: update the shared Arma installation while all instances are stopped")
+    @server.command(name="update", description="Operator: update the shared Arma installation while all instances are stopped")
     async def server_update(self, interaction: discord.Interaction):
-        if not utils.has_admin_auth(interaction):
-            await interaction.response.send_message("Only the hardware owner may update shared files.", ephemeral=True)
+        if not await utils.require_access(interaction, "update", ""):
             return
-        await self.bot.jobs.run(interaction, "update", "", "setup/Update-Server.ps1", owner_only=True)
+        await self.bot.jobs.run(interaction, "update", "", "setup/Update-Server.ps1")
 
 
 async def setup(bot):
