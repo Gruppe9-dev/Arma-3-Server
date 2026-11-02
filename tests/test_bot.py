@@ -89,6 +89,22 @@ class CommandTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 ssh_helper.build_ps_invocation(script, args)
 
+    def test_server_update_accepts_only_known_branch_values(self):
+        for branch in ("public", "profiling", "development"):
+            with self.subTest(branch=branch):
+                code = ssh_helper.build_ps_invocation("setup/Update-Server.ps1", {"Branch": branch})
+                payload = re.search(r"FromBase64String\('([^']+)'\)", code)[1]
+                self.assertEqual(json.loads(base64.b64decode(payload)), {"Branch": branch})
+        for branch in ("", "Public", "unknown", "public -StopFirst", "public; exit", True, 1, None):
+            with self.subTest(branch=branch), self.assertRaises(ValueError):
+                ssh_helper.build_ps_invocation("setup/Update-Server.ps1", {"Branch": branch})
+        for script, parameters in [
+            ("scripts/Start-Server.ps1", {"Profile": "main", "Branch": "public"}),
+            ("setup/Update-Server.ps1", {"Branch": "public", "StopFirst": True}),
+        ]:
+            with self.subTest(script=script), self.assertRaises(ValueError):
+                ssh_helper.build_ps_invocation(script, parameters)
+
     @unittest.skipUnless(sys.platform == "win32", "PowerShell boundary integration test")
     def test_powershell_preserves_values_and_exit_codes(self):
         with tempfile.TemporaryDirectory(prefix="arma-quote-#-") as folder:

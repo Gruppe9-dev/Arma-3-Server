@@ -178,15 +178,34 @@ class PresetImportTests(unittest.IsolatedAsyncioTestCase):
         self.execute.reset_mock()
         request = self.request()
         request.guild.fetch_member.return_value = self.request(roles=()).user
-        await server.server_update.callback(server, request)
+        await server.server_update.callback(server, request, branch=discord.app_commands.Choice(name="Public", value="public"))
         self.execute.assert_not_awaited()
         self.assertEqual(self.store.db.execute("SELECT status FROM jobs ORDER BY id DESC LIMIT 1").fetchone()[0], "denied")
+
+    async def test_server_update_exposes_optional_branch_choices(self):
+        from cogs.server import ServerCog
+        branch = ServerCog.server_update.get_parameter("branch")
+        self.assertIsNotNone(branch)
+        self.assertFalse(branch.required)
+        self.assertEqual([choice.value for choice in branch.choices], ["public", "profiling", "development"])
+
+    async def test_server_update_passes_selected_branch_through_the_job_queue(self):
+        from cogs.server import ServerCog
+        server = ServerCog(self.bot)
+        for branch in ("public", "profiling", "development"):
+            with self.subTest(branch=branch):
+                self.execute.reset_mock()
+                await server.server_update.callback(
+                    server, self.request(), branch=discord.app_commands.Choice(name=branch.title(), value=branch),
+                )
+                self.execute.assert_awaited_once_with("setup/Update-Server.ps1", Branch=branch)
+        self.assertEqual(self.store.db.execute("SELECT COUNT(*) FROM jobs WHERE status='completed'").fetchone()[0], 3)
 
     async def test_server_update_denies_viewers_and_unconfigured_guilds(self):
         from cogs.server import ServerCog
         server = ServerCog(self.bot)
         for request in (self.request(roles=(101,)), self.request(guild=30)):
-            await server.server_update.callback(server, request)
+            await server.server_update.callback(server, request, branch=discord.app_commands.Choice(name="Public", value="public"))
             request.response.send_message.assert_awaited_once()
         self.execute.assert_not_awaited()
 

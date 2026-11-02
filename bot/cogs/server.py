@@ -500,11 +500,18 @@ class ServerCog(commands.Cog):
             await self.bot.jobs.run(interaction, "preset", profile, "scripts/Set-InstancePreset.ps1", Profile=profile, Preset=preset)
             self._catalog_time = 0
 
-    @server.command(name="update", description="Operator: update the shared Arma installation while all instances are stopped")
-    async def server_update(self, interaction: discord.Interaction):
+    @server.command(name="update", description="Operator: update or switch the shared Arma branch while all instances are stopped")
+    @app_commands.describe(branch="Shared branch to install; omit to use the configured update target")
+    @app_commands.choices(branch=[
+        app_commands.Choice(name="Public", value="public"),
+        app_commands.Choice(name="Profiling", value="profiling"),
+        app_commands.Choice(name="Development", value="development"),
+    ])
+    async def server_update(self, interaction: discord.Interaction, branch: app_commands.Choice[str] | None = None):
         if not await utils.require_access(interaction, "update", ""):
             return
-        await self.bot.jobs.run(interaction, "update", "", "setup/Update-Server.ps1")
+        parameters = {"Branch": branch.value} if branch is not None else {}
+        await self.bot.jobs.run(interaction, "update", "", "setup/Update-Server.ps1", **parameters)
 
 
 async def setup(bot):

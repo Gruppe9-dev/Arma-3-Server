@@ -74,7 +74,7 @@ _SCRIPTS = {
     "scripts/Set-InstancePreset.ps1": {"Profile", "Preset"},
     "scripts/Get-ServerStatus.ps1": {"Profile"},
     "scripts/Auto-Update.ps1": set(),
-    "setup/Update-Server.ps1": set(),
+    "setup/Update-Server.ps1": {"Branch"},
     "mods/Sync-Mods.ps1": {"Profile", "Force", "Update", "RestartServer", "CheckOnly"},
     "mods/Import-Preset.ps1": {"Profile", "PresetFile", "Merge", "SyncAfter"},
 }
@@ -89,6 +89,8 @@ def build_ps_invocation(rel_path: str, parameters: dict) -> str:
             raise ValueError("Unsupported parameter value")
         if key in {"Profile", "Preset"} and not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,63}|_all", str(value)):
             raise ValueError("Invalid profile or preset ID")
+        if key == "Branch" and value not in {"public", "profiling", "development"}:
+            raise ValueError("Invalid server branch")
         if value == "_all" and (rel_path != "mods/Sync-Mods.ps1" or key != "Profile"):
             raise ValueError("_all is only supported for owner mod synchronization")
     payload = base64.b64encode(json.dumps(parameters, ensure_ascii=True).encode("utf-8")).decode("ascii")

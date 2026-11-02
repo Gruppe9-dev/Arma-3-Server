@@ -356,9 +356,18 @@ the base profile and is reserved. Example:
 | `/server stop profile` | Terminate only verified instance processes |
 | `/server restart profile` | Stop/start; ends the active game session |
 | `/server preset profile preset` | Select an approved preset while stopped |
-| `/server update` | Operators: shared Arma update, idle-only |
+| `/server update [branch]` | Operators: shared Arma update, idle-only; optional Public, Profiling or Development branch |
 | `/mods import-preset` | Operators: assigned instances, including `sync_after` |
 | `/mods sync`, `/mods update` | Operators: assigned instances; `_all` expands to authorized profiles |
+
+For example, `/server update branch:public` installs the public branch, and
+`/server update branch:profiling` installs the profiling branch. This changes the
+shared installation used by every instance, so all servers and headless clients
+must be stopped. Each profile's `Branch` must match before that instance starts.
+The command does not rewrite profiles or `SERVER_UPDATE_BRANCH` in the host
+`.env`. Without `branch`, updates use `SERVER_UPDATE_BRANCH`, then the installed
+branch marker, then `public`. Align the configured default as well if subsequent
+automatic or unspecified updates should stay on the selected branch.
 
 Stop/restart currently terminate game processes; persistent missions should save
 first. They do not implement mission-specific graceful save/RCon shutdown.

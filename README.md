@@ -212,7 +212,7 @@ startup to fail. See [Arsenal startup troubleshooting](docs/discord-arsenal.md#d
 | `/server stop profile` | Stop only that instance's verified processes |
 | `/server restart profile` | Stop and start that instance |
 | `/server preset profile preset` | Select an approved preset while stopped |
-| `/server update` | Operators: update the idle shared engine |
+| `/server update [branch]` | Operators: update the idle shared engine; optionally select Public, Profiling or Development |
 | `/mods import-preset` | Operators: import for assigned instances, including `sync_after` |
 | `/mods sync`, `/mods update` | Operators: assigned instances; `_all` expands to authorized instances |
 | `/arsenal status`, `/arsenal diff` | View the active SD60 revision and draft |
@@ -224,6 +224,16 @@ Operators manage the shared engine/mod files through these bounded commands;
 updates can affect all instances using the same content. Deployment remains
 subject to host-side idle checks and maintenance locks. Operators cannot modify
 arbitrary host paths/startup arguments or access another guild's instances.
+
+Use `/server update branch:public` or `/server update branch:profiling` to switch
+the shared installation. All instances and headless clients must be stopped.
+Omitting `branch` keeps the existing selection order: `SERVER_UPDATE_BRANCH` in
+the host `.env`, then the installed branch marker, then `public`. An explicit
+choice applies to that update only; it does not edit `.env` or any profile.
+Set each profile's `Branch` to the installed branch before starting it. To keep
+future automatic or unspecified updates on that branch, also align
+`SERVER_UPDATE_BRANCH` when it is configured.
+
 Status panels and operation history are persisted
 in `bot/data/jobs.sqlite3`. Jobs are serialized and permissions are checked again
 before execution. Interrupted jobs are recorded without automatic replay.

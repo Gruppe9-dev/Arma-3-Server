@@ -38,3 +38,8 @@ Desktop.ini
 
 #Stuff
 ToDo.md
+Agents.md
+
+#graphify
+.graphifyignore
+graphify-out/
